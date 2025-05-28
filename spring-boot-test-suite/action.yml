@@ -323,6 +323,7 @@ runs:
     - name: Publish test results
       if: inputs.publish-test-results == 'true' && always()
       uses: EnricoMi/publish-unit-test-result-action@v2
+      continue-on-error: true
       with:
         files: |
           ${{ inputs.working-directory }}/target/surefire-reports/TEST-*.xml
