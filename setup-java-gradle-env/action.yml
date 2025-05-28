@@ -1,0 +1,200 @@
+name: 'Setup Java Gradle Environment'
+description: 'Configura entorno Java 21 y Gradle para aplicaciones Spring Boot con optimizaciones de caché'
+author: 'DevOps Team'
+
+inputs:
+  java-version:
+    description: 'Versión de Java a configurar'
+    required: false
+    default: '21'
+  java-distribution:
+    description: 'Distribución de Java (temurin, corretto, microsoft)'
+    required: false
+    default: 'temurin'
+  gradle-version:
+    description: 'Versión específica de Gradle (opcional, usa wrapper por defecto)'
+    required: false
+    default: 'wrapper'
+  cache-strategy:
+    description: 'Estrategia de caché (gradle-cache|dependencies-cache|all|none)'
+    required: false
+    default: 'all'
+  jvm-args:
+    description: 'Argumentos JVM adicionales para Gradle'
+    required: false
+    default: '-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
+  spring-profiles:
+    description: 'Perfiles de Spring a activar durante build'
+    required: false
+    default: 'test'
+  gradle-args:
+    description: 'Argumentos adicionales para Gradle'
+    required: false
+    default: '--no-daemon --parallel'
+  maven-repositories:
+    description: 'Repositorios Maven adicionales (JSON array)'
+    required: false
+    default: '[]'
+
+outputs:
+  gradle-version:
+    description: 'Versión de Gradle instalada'
+    value: ${{ steps.gradle-info.outputs.gradle-version }}
+  java-home:
+    description: 'Ruta de instalación de Java'
+    value: ${{ steps.java-setup.outputs.path }}
+  java-version:
+    description: 'Versión de Java instalada'
+    value: ${{ steps.java-setup.outputs.version }}
+  cache-hit:
+    description: 'Indica si el caché de Gradle fue encontrado'
+    value: ${{ steps.gradle-cache.outputs.cache-hit }}
+  cache-key:
+    description: 'Clave del caché utilizada'
+    value: ${{ steps.cache-info.outputs.cache-key }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Java
+      id: java-setup
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+        cache: gradle
+
+    - name: Generate cache key
+      id: cache-info
+      shell: bash
+      run: |
+        # Generate cache key based on Gradle files and configuration
+        cache_key="gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}-${{ inputs.gradle-version }}-${{ inputs.jvm-args }}"
+        echo "cache-key=$cache_key" >> $GITHUB_OUTPUT
+        echo "Cache key: $cache_key"
+
+    - name: Cache Gradle dependencies
+      id: gradle-cache
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'dependencies-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          .gradle/caches
+        key: ${{ steps.cache-info.outputs.cache-key }}
+        restore-keys: |
+          gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*') }}-
+          gradle-${{ runner.os }}-
+
+    - name: Cache Gradle build cache
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'gradle-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/build-cache
+          .gradle/build-cache
+        key: gradle-build-cache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          gradle-build-cache-${{ runner.os }}-
+
+    - name: Setup Gradle
+      if: inputs.gradle-version != 'wrapper'
+      uses: gradle/gradle-build-action@v2
+      with:
+        gradle-version: ${{ inputs.gradle-version }}
+
+    - name: Configure Gradle properties
+      shell: bash
+      run: |
+        # Create gradle.properties if it doesn't exist
+        if [ ! -f gradle.properties ]; then
+          touch gradle.properties
+        fi
+        
+        # Configure JVM args
+        echo "org.gradle.jvmargs=${{ inputs.jvm-args }}" >> gradle.properties
+        
+        # Configure Gradle daemon
+        echo "org.gradle.daemon=false" >> gradle.properties
+        echo "org.gradle.parallel=true" >> gradle.properties
+        
+        # Configure Spring profiles for tests
+        echo "spring.profiles.active=${{ inputs.spring-profiles }}" >> gradle.properties
+        
+        # Show configuration
+        echo "=== Gradle Configuration ==="
+        cat gradle.properties
+        echo "==========================="
+
+    - name: Configure additional Maven repositories
+      if: inputs.maven-repositories != '[]'
+      shell: bash
+      run: |
+        # Script to add additional Maven repositories
+        cat << 'EOF' > add_repositories.gradle
+        allprojects {
+          repositories {
+        EOF
+        
+        # Parse JSON and add repositories
+        echo '${{ inputs.maven-repositories }}' | jq -r '.[] | "    maven { url \"" + . + "\" }"' >> add_repositories.gradle
+        
+        cat << 'EOF' >> add_repositories.gradle
+          }
+        }
+        EOF
+        
+        # Apply to build.gradle
+        if [ -f build.gradle ]; then
+          cat add_repositories.gradle >> build.gradle
+        fi
+
+    - name: Validate Gradle setup
+      shell: bash
+      run: |
+        # Validate Gradle wrapper
+        if [ -f gradlew ]; then
+          chmod +x gradlew
+          ./gradlew --version
+        else
+          gradle --version
+        fi
+        
+        # Validate Java setup
+        java -version
+        echo "JAVA_HOME: $JAVA_HOME"
+
+    - name: Get Gradle info
+      id: gradle-info
+      shell: bash
+      run: |
+        if [ -f gradlew ]; then
+          gradle_version=$(./gradlew --version | grep "Gradle" | cut -d' ' -f2)
+        else
+          gradle_version=$(gradle --version | grep "Gradle" | cut -d' ' -f2)
+        fi
+        echo "gradle-version=$gradle_version" >> $GITHUB_OUTPUT
+        echo "Gradle version: $gradle_version"
+
+    - name: Setup Gradle build scan
+      if: env.GRADLE_BUILD_SCAN == 'true'
+      shell: bash
+      run: |
+        # Add build scan plugin if not present
+        if ! grep -q "com.gradle.build-scan" build.gradle*; then
+          cat << 'EOF' >> build.gradle
+        plugins {
+            id 'com.gradle.build-scan' version '3.16.2'
+        }
+        buildScan {
+            termsOfServiceUrl = 'https://gradle.com/terms-of-service'
+            termsOfServiceAgree = 'yes'
+            publishAlways()
+        }
+        EOF
+        fi
+
+branding:
+  icon: 'settings'
+  color: 'blue'
