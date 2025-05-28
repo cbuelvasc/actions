@@ -276,18 +276,6 @@ jvm-args: '-Xmx6g -XX:+UseG1GC -XX:+UnlockExperimentalVMOptions'
 - Gradle project with wrapper (recommended) or compatible Gradle version
 - Java project compatible with specified Java version
 
-## License
-
-This action is available under the MIT License.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
 ## Support
 
 For issues and questions:

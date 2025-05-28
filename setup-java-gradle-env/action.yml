@@ -1,61 +1,108 @@
 name: 'Setup Java Gradle Environment'
-description: 'Configura entorno Java 21 y Gradle para aplicaciones Spring Boot con optimizaciones de caché'
-author: 'DevOps Team'
+description: 'Sets up Java 21 and Gradle environment for Spring Boot applications with cache optimizations'
+author: 'Carmelo Buelvas Comas'
 
 inputs:
-  java-version:
-    description: 'Versión de Java a configurar'
-    required: false
-    default: '21'
-  java-distribution:
-    description: 'Distribución de Java (temurin, corretto, microsoft)'
-    required: false
-    default: 'temurin'
-  gradle-version:
-    description: 'Versión específica de Gradle (opcional, usa wrapper por defecto)'
-    required: false
-    default: 'wrapper'
+  # Standard Java/Build inputs (ordered alphabetically)
   cache-strategy:
-    description: 'Estrategia de caché (gradle-cache|dependencies-cache|all|none)'
+    description: 'Cache strategy (gradle-cache, dependencies-cache, all, none)'
     required: false
     default: 'all'
-  jvm-args:
-    description: 'Argumentos JVM adicionales para Gradle'
-    required: false
-    default: '-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
-  spring-profiles:
-    description: 'Perfiles de Spring a activar durante build'
-    required: false
-    default: 'test'
+    
   gradle-args:
-    description: 'Argumentos adicionales para Gradle'
+    description: 'Additional Gradle arguments'
     required: false
     default: '--no-daemon --parallel'
+    
+  gradle-version:
+    description: 'Specific Gradle version (optional, uses wrapper by default)'
+    required: false
+    default: 'wrapper'
+    
+  java-distribution:
+    description: 'Java distribution (temurin, corretto, microsoft, oracle)'
+    required: false
+    default: 'temurin'
+    
+  java-version:
+    description: 'Java version to set up'
+    required: false
+    default: '21'
+    
+  jvm-args:
+    description: 'Additional JVM arguments for Gradle'
+    required: false
+    default: '-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
+    
   maven-repositories:
-    description: 'Repositorios Maven adicionales (JSON array)'
+    description: 'Additional Maven repositories (JSON array format)'
     required: false
     default: '[]'
+    
+  spring-profiles:
+    description: 'Spring profiles to activate during build'
+    required: false
+    default: 'test'
 
 outputs:
-  gradle-version:
-    description: 'Versión de Gradle instalada'
-    value: ${{ steps.gradle-info.outputs.gradle-version }}
-  java-home:
-    description: 'Ruta de instalación de Java'
-    value: ${{ steps.java-setup.outputs.path }}
-  java-version:
-    description: 'Versión de Java instalada'
-    value: ${{ steps.java-setup.outputs.version }}
+  # Primary outputs
   cache-hit:
-    description: 'Indica si el caché de Gradle fue encontrado'
+    description: 'Indicates if Gradle cache was found'
     value: ${{ steps.gradle-cache.outputs.cache-hit }}
+    
   cache-key:
-    description: 'Clave del caché utilizada'
+    description: 'Cache key used for dependencies'
     value: ${{ steps.cache-info.outputs.cache-key }}
+    
+  gradle-version:
+    description: 'Installed Gradle version'
+    value: ${{ steps.gradle-info.outputs.gradle-version }}
+    
+  # Secondary outputs
+  java-home:
+    description: 'Java installation path'
+    value: ${{ steps.java-setup.outputs.path }}
+    
+  java-version:
+    description: 'Installed Java version'
+    value: ${{ steps.java-setup.outputs.version }}
 
 runs:
   using: 'composite'
   steps:
+    # 1. Input validation
+    - name: Validate inputs
+      shell: bash
+      run: |
+        echo "=== Validating Action Inputs ==="
+        
+        # Validate cache strategy
+        if [[ "${{ inputs.cache-strategy }}" != "gradle-cache" && "${{ inputs.cache-strategy }}" != "dependencies-cache" && "${{ inputs.cache-strategy }}" != "all" && "${{ inputs.cache-strategy }}" != "none" ]]; then
+          echo "❌ Error: cache-strategy must be one of: gradle-cache, dependencies-cache, all, none"
+          echo "   Provided: '${{ inputs.cache-strategy }}'"
+          exit 1
+        fi
+        echo "✅ Cache strategy: ${{ inputs.cache-strategy }}"
+        
+        # Validate Java version format
+        if ! [[ "${{ inputs.java-version }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.java-version }}" -lt 8 ]]; then
+          echo "❌ Error: java-version must be a valid Java version (8 or higher)"
+          echo "   Provided: '${{ inputs.java-version }}'"
+          exit 1
+        fi
+        echo "✅ Java version: ${{ inputs.java-version }}"
+        
+        # Validate Maven repositories JSON
+        if ! echo '${{ inputs.maven-repositories }}' | jq empty 2>/dev/null; then
+          echo "❌ Error: maven-repositories must be valid JSON array"
+          echo "   Provided: '${{ inputs.maven-repositories }}'"
+          exit 1
+        fi
+        echo "✅ Maven repositories: ${{ inputs.maven-repositories }}"
+        
+        echo "=== Input validation completed ==="
+
+    # 2. Setup Java environment
     - name: Setup Java
       id: java-setup
       uses: actions/setup-java@v4
@@ -64,15 +111,19 @@ runs:
         java-version: ${{ inputs.java-version }}
         cache: gradle
 
+    # 3. Generate cache configuration
     - name: Generate cache key
       id: cache-info
       shell: bash
       run: |
+        echo "=== Generating Cache Configuration ==="
+        
         # Generate cache key based on Gradle files and configuration
         cache_key="gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}-${{ inputs.gradle-version }}-${{ inputs.jvm-args }}"
         echo "cache-key=$cache_key" >> $GITHUB_OUTPUT
-        echo "Cache key: $cache_key"
+        echo "📦 Cache key: $cache_key"
 
+    # 4. Cache management
     - name: Cache Gradle dependencies
       id: gradle-cache
       if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'dependencies-cache'
@@ -98,29 +149,37 @@ runs:
         restore-keys: |
           gradle-build-cache-${{ runner.os }}-
 
+    # 5. Setup Gradle
     - name: Setup Gradle
       if: inputs.gradle-version != 'wrapper'
       uses: gradle/gradle-build-action@v2
       with:
         gradle-version: ${{ inputs.gradle-version }}
 
+    # 6. Configure build environment
     - name: Configure Gradle properties
       shell: bash
       run: |
+        echo "=== Configuring Gradle Properties ==="
+        
         # Create gradle.properties if it doesn't exist
         if [ ! -f gradle.properties ]; then
           touch gradle.properties
+          echo "✅ Created gradle.properties"
         fi
         
         # Configure JVM args
         echo "org.gradle.jvmargs=${{ inputs.jvm-args }}" >> gradle.properties
+        echo "✅ JVM args: ${{ inputs.jvm-args }}"
         
         # Configure Gradle daemon
         echo "org.gradle.daemon=false" >> gradle.properties
         echo "org.gradle.parallel=true" >> gradle.properties
+        echo "✅ Gradle daemon: disabled, parallel: enabled"
         
         # Configure Spring profiles for tests
         echo "spring.profiles.active=${{ inputs.spring-profiles }}" >> gradle.properties
+        echo "✅ Spring profiles: ${{ inputs.spring-profiles }}"
         
         # Show configuration
         echo "=== Gradle Configuration ==="
@@ -131,6 +190,8 @@ runs:
       if: inputs.maven-repositories != '[]'
       shell: bash
       run: |
+        echo "=== Configuring Additional Maven Repositories ==="
+        
         # Script to add additional Maven repositories
         cat << 'EOF' > add_repositories.gradle
         allprojects {
@@ -148,22 +209,46 @@ runs:
         # Apply to build.gradle
         if [ -f build.gradle ]; then
           cat add_repositories.gradle >> build.gradle
+          echo "✅ Added repositories to build.gradle"
+        elif [ -f build.gradle.kts ]; then
+          # Convert to Kotlin DSL format if needed
+          echo "⚠️  Kotlin DSL detected, manual repository configuration may be needed"
+        else
+          echo "⚠️  No build.gradle found, repositories not configured"
         fi
+        
+        # Show added repositories
+        echo "📦 Added repositories:"
+        echo '${{ inputs.maven-repositories }}' | jq -r '.[]'
 
+    # 7. Validation and setup completion
     - name: Validate Gradle setup
       shell: bash
       run: |
+        echo "=== Validating Gradle Setup ==="
+        
         # Validate Gradle wrapper
         if [ -f gradlew ]; then
           chmod +x gradlew
-          ./gradlew --version
+          echo "✅ Made gradlew executable"
+          GRADLE_VERSION=$(./gradlew --version | grep "Gradle" | cut -d' ' -f2)
+          echo "📦 Gradle version (wrapper): $GRADLE_VERSION"
         else
-          gradle --version
+          if command -v gradle &> /dev/null; then
+            GRADLE_VERSION=$(gradle --version | grep "Gradle" | cut -d' ' -f2)
+            echo "📦 Gradle version (system): $GRADLE_VERSION"
+          else
+            echo "❌ Error: Neither gradlew nor system gradle found"
+            exit 1
+          fi
         fi
         
         # Validate Java setup
+        echo "☕ Java version:"
         java -version
-        echo "JAVA_HOME: $JAVA_HOME"
+        echo "🏠 JAVA_HOME: $JAVA_HOME"
+        
+        echo "✅ Gradle setup validation completed"
 
     - name: Get Gradle info
       id: gradle-info
@@ -175,12 +260,14 @@ runs:
           gradle_version=$(gradle --version | grep "Gradle" | cut -d' ' -f2)
         fi
         echo "gradle-version=$gradle_version" >> $GITHUB_OUTPUT
-        echo "Gradle version: $gradle_version"
+        echo "📦 Final Gradle version: $gradle_version"
 
     - name: Setup Gradle build scan
       if: env.GRADLE_BUILD_SCAN == 'true'
       shell: bash
       run: |
+        echo "=== Setting up Gradle Build Scan ==="
+        
         # Add build scan plugin if not present
         if ! grep -q "com.gradle.build-scan" build.gradle*; then
           cat << 'EOF' >> build.gradle
@@ -193,6 +280,9 @@ runs:
             publishAlways()
         }
         EOF
+          echo "✅ Added Gradle build scan plugin"
+        else
+          echo "✅ Build scan plugin already configured"
         fi
 
 branding:
