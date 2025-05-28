@@ -1,26 +1,22 @@
-name: Cache Gradle Dependencies
-author: 'Carmelo Buelvas Comas'
-description: Cache Gradle Dependencies for the specified service
-inputs:
-  service-name:
-    description: 'The name of the service to cache the dependencies'
-    required: true
-    default: 'user-service'
-runs:
-  using: 'composite'
-  steps:
-    - name: Cache Gradle Dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-          ~/.gradle/daemon
-          ${{ inputs.service-name }}/.gradle/caches
-          ${{ inputs.service-name }}/.gradle/wrapper
-        key: ${{ runner.os }}-gradle-${{ inputs.service-name }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-${{ inputs.service-name }}-
-          ${{ runner.os }}-gradle-
-          ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-          ${{ runner.os }}-gradle-wrapper-
+   name: 'Cache Gradle Dependencies'
+   description: 'Cache Gradle Dependencies Wrapper'
+   inputs:
+     service-name:
+       description: 'Service name'
+       required: true
+   runs:
+     using: 'composite'
+     steps:
+       - uses: actions/cache@v4
+         shell: bash
+         with:
+           path: |
+             ~/.gradle/caches
+             ~/.gradle/wrapper
+             ~/.gradle/daemon
+             ${{ inputs.service-name }}/.gradle/caches
+             ${{ inputs.service-name }}/.gradle/wrapper
+           key: ${{ runner.os }}-gradle-${{ inputs.service-name }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+           restore-keys: |
+             ${{ runner.os }}-gradle-${{ inputs.service-name }}-
+             ${{ runner.os }}-gradle-
