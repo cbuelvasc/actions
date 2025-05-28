@@ -4,7 +4,7 @@ A comprehensive GitHub Action that configures Java 21 and Gradle environment for
 
 ## Features
 
-- 🚀 **Java Setup**: Configures Java with multiple distribution options (Temurin, Corretto, Microsoft)
+- 🚀 **Java Setup**: Configures Java with multiple distribution options (Temurin, Corretto, Microsoft, Oracle)
 - 📦 **Gradle Configuration**: Supports both Gradle wrapper and specific versions
 - ⚡ **Smart Caching**: Multiple caching strategies for dependencies and build cache
 - 🔧 **JVM Optimization**: Configurable JVM arguments for optimal performance
@@ -17,7 +17,7 @@ A comprehensive GitHub Action that configures Java 21 and Gradle environment for
 | Input | Description | Required | Default |
 |-------|-------------|----------|---------|
 | `java-version` | Java version to setup | No | `21` |
-| `java-distribution` | Java distribution (temurin, corretto, microsoft) | No | `temurin` |
+| `java-distribution` | Java distribution (temurin, corretto, microsoft, oracle) | No | `temurin` |
 | `gradle-version` | Specific Gradle version (uses wrapper by default) | No | `wrapper` |
 | `cache-strategy` | Cache strategy (gradle-cache\|dependencies-cache\|all\|none) | No | `all` |
 | `jvm-args` | Additional JVM arguments for Gradle | No | `-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200` |
