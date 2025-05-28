@@ -1,0 +1,281 @@
+name: 'Test Runner'
+description: 'Executes tests with coverage reporting for Spring Boot applications'
+author: 'Carmelo Buelvas Comas'
+
+inputs:
+  build-tool:
+    description: 'Build tool to use (maven or gradle)'
+    required: true
+    
+  working-directory:
+    description: 'Working directory for the project'
+    required: false
+    default: '.'
+    
+  # Test execution inputs
+  integration-tests:
+    description: 'Run integration tests'
+    required: false
+    default: 'true'
+    
+  parallel-tests:
+    description: 'Enable parallel test execution'
+    required: false
+    default: 'true'
+    
+  test-command:
+    description: 'Custom test command to run (overrides default test execution)'
+    required: false
+    default: ''
+    
+  # Coverage inputs
+  coverage-enabled:
+    description: 'Enable code coverage reporting'
+    required: false
+    default: 'true'
+    
+  coverage-format:
+    description: 'Coverage report format (jacoco, cobertura)'
+    required: false
+    default: 'jacoco'
+    
+  coverage-threshold:
+    description: 'Minimum coverage percentage required'
+    required: false
+    default: '80'
+    
+  fail-on-coverage-threshold:
+    description: 'Fail if coverage is below threshold'
+    required: false
+    default: 'false'
+    
+  # Reporting inputs
+  publish-test-results:
+    description: 'Publish test results as GitHub check'
+    required: false
+    default: 'true'
+    
+  # Build tool specific inputs
+  gradle-args:
+    description: 'Additional Gradle arguments'
+    required: false
+    default: '--no-daemon --parallel'
+    
+  maven-args:
+    description: 'Additional Maven arguments'
+    required: false
+    default: '-T 1C --no-transfer-progress'
+
+outputs:
+  test-result:
+    description: 'Test execution result (success/failure)'
+    value: ${{ steps.test-execution.outputs.result }}
+    
+  coverage-percentage:
+    description: 'Code coverage percentage'
+    value: ${{ steps.coverage-report.outputs.coverage }}
+    
+  test-count:
+    description: 'Number of tests executed'
+    value: ${{ steps.test-summary.outputs.test-count }}
+    
+  failed-test-count:
+    description: 'Number of failed tests'
+    value: ${{ steps.test-summary.outputs.failed-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate test inputs
+      shell: bash
+      run: |
+        echo "=== Validating Test Inputs ==="
+        
+        # Validate build tool
+        if [[ "${{ inputs.build-tool }}" != "maven" && "${{ inputs.build-tool }}" != "gradle" ]]; then
+          echo "❌ Error: build-tool must be either 'maven' or 'gradle'"
+          echo "   Provided: '${{ inputs.build-tool }}'"
+          exit 1
+        fi
+        echo "✅ Build tool: ${{ inputs.build-tool }}"
+        
+        # Validate coverage format
+        if [[ "${{ inputs.coverage-format }}" != "jacoco" && "${{ inputs.coverage-format }}" != "cobertura" ]]; then
+          echo "❌ Error: coverage-format must be either 'jacoco' or 'cobertura'"
+          echo "   Provided: '${{ inputs.coverage-format }}'"
+          exit 1
+        fi
+        echo "✅ Coverage format: ${{ inputs.coverage-format }}"
+        
+        # Validate coverage threshold
+        if ! [[ "${{ inputs.coverage-threshold }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.coverage-threshold }}" -lt 0 ]] || [[ "${{ inputs.coverage-threshold }}" -gt 100 ]]; then
+          echo "❌ Error: coverage-threshold must be a number between 0 and 100"
+          echo "   Provided: '${{ inputs.coverage-threshold }}'"
+          exit 1
+        fi
+        echo "✅ Coverage threshold: ${{ inputs.coverage-threshold }}%"
+
+    - name: Run tests with Maven
+      if: inputs.build-tool == 'maven' && inputs.test-command == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Running Maven Tests ==="
+        
+        MAVEN_OPTS=""
+        if [[ "${{ inputs.parallel-tests }}" == "true" ]]; then
+          MAVEN_OPTS="$MAVEN_OPTS -T 1C"
+          echo "✅ Parallel execution enabled"
+        fi
+        
+        TEST_GOALS="test"
+        if [[ "${{ inputs.integration-tests }}" == "true" ]]; then
+          TEST_GOALS="test integration-test"
+          echo "✅ Integration tests included"
+        fi
+        
+        COVERAGE_PROFILE=""
+        if [[ "${{ inputs.coverage-enabled }}" == "true" ]]; then
+          COVERAGE_PROFILE="-Pcoverage"
+          echo "✅ Coverage enabled"
+        fi
+        
+        MAVEN_CMD="mvn"
+        if [ -f mvnw ]; then
+          MAVEN_CMD="./mvnw"
+        fi
+        
+        echo "Executing: $MAVEN_CMD clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS ${{ inputs.maven-args }}"
+        $MAVEN_CMD clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS ${{ inputs.maven-args }}
+
+    - name: Run tests with Gradle
+      if: inputs.build-tool == 'gradle' && inputs.test-command == ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Running Gradle Tests ==="
+        
+        GRADLE_OPTS=""
+        if [[ "${{ inputs.parallel-tests }}" == "true" ]]; then
+          GRADLE_OPTS="$GRADLE_OPTS --parallel"
+          echo "✅ Parallel execution enabled"
+        fi
+        
+        TEST_TASKS="test"
+        if [[ "${{ inputs.integration-tests }}" == "true" ]]; then
+          TEST_TASKS="test integrationTest"
+          echo "✅ Integration tests included"
+        fi
+        
+        if [[ "${{ inputs.coverage-enabled }}" == "true" ]]; then
+          TEST_TASKS="$TEST_TASKS jacocoTestReport"
+          echo "✅ Coverage enabled"
+        fi
+        
+        GRADLE_CMD="./gradlew"
+        if [[ ! -f gradlew ]]; then
+          GRADLE_CMD="gradle"
+        fi
+        
+        echo "Executing: $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS ${{ inputs.gradle-args }}"
+        $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS ${{ inputs.gradle-args }}
+
+    - name: Run custom test command
+      if: inputs.test-command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Running Custom Test Command ==="
+        echo "Command: ${{ inputs.test-command }}"
+        ${{ inputs.test-command }}
+
+    - name: Generate test summary
+      id: test-summary
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Generating Test Summary ==="
+        
+        TEST_COUNT=0
+        FAILED_COUNT=0
+        
+        if [[ "${{ inputs.build-tool }}" == "maven" ]]; then
+          if compgen -G "target/surefire-reports/TEST-*.xml" > /dev/null; then
+            TEST_COUNT=$(grep -h "tests=" target/surefire-reports/TEST-*.xml | sed 's/.*tests="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum}')
+            FAILED_COUNT=$(grep -h "failures=" target/surefire-reports/TEST-*.xml | sed 's/.*failures="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum}')
+          fi
+        else
+          if compgen -G "build/test-results/test/TEST-*.xml" > /dev/null; then
+            TEST_COUNT=$(grep -h "tests=" build/test-results/test/TEST-*.xml | sed 's/.*tests="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum}')
+            FAILED_COUNT=$(grep -h "failures=" build/test-results/test/TEST-*.xml | sed 's/.*failures="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum}')
+          fi
+        fi
+        
+        echo "test-count=${TEST_COUNT:-0}" >> $GITHUB_OUTPUT
+        echo "failed-count=${FAILED_COUNT:-0}" >> $GITHUB_OUTPUT
+        echo "📊 Tests executed: ${TEST_COUNT:-0}, Failed: ${FAILED_COUNT:-0}"
+
+    - name: Generate coverage report
+      id: coverage-report
+      if: inputs.coverage-enabled == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Generating Coverage Report ==="
+        
+        COVERAGE_PERCENTAGE=0
+        
+        if [[ "${{ inputs.build-tool }}" == "maven" ]]; then
+          if [[ -f "target/site/jacoco/jacoco.xml" ]]; then
+            COVERAGE_PERCENTAGE=$(awk -F'[%"]' '/instruction.*missed/{missed=$3} /instruction.*covered/{covered=$3} END{if(missed+covered>0) print int(covered*100/(missed+covered)); else print 0}' target/site/jacoco/jacoco.xml)
+          fi
+        else
+          if [[ -f "build/reports/jacoco/test/jacocoTestReport.xml" ]]; then
+            COVERAGE_PERCENTAGE=$(awk -F'[%"]' '/instruction.*missed/{missed=$3} /instruction.*covered/{covered=$3} END{if(missed+covered>0) print int(covered*100/(missed+covered)); else print 0}' build/reports/jacoco/test/jacocoTestReport.xml)
+          fi
+        fi
+        
+        echo "coverage=${COVERAGE_PERCENTAGE:-0}" >> $GITHUB_OUTPUT
+        echo "📈 Code coverage: ${COVERAGE_PERCENTAGE:-0}%"
+        
+        # Check coverage threshold
+        if [[ "${{ inputs.fail-on-coverage-threshold }}" == "true" && ${COVERAGE_PERCENTAGE:-0} -lt ${{ inputs.coverage-threshold }} ]]; then
+          echo "❌ Error: Coverage ${COVERAGE_PERCENTAGE:-0}% is below threshold ${{ inputs.coverage-threshold }}%"
+          exit 1
+        fi
+
+    - name: Publish test results
+      if: inputs.publish-test-results == 'true' && always()
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      continue-on-error: true
+      with:
+        files: |
+          ${{ inputs.working-directory }}/target/surefire-reports/TEST-*.xml
+          ${{ inputs.working-directory }}/build/test-results/test/TEST-*.xml
+
+    - name: Upload coverage reports
+      if: inputs.coverage-enabled == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports-${{ github.run_number }}
+        path: |
+          ${{ inputs.working-directory }}/target/site/jacoco/
+          ${{ inputs.working-directory }}/build/reports/jacoco/
+        retention-days: 7
+
+    - name: Set test execution result
+      id: test-execution
+      shell: bash
+      run: |
+        FAILED_COUNT="${{ steps.test-summary.outputs.failed-count }}"
+        if [[ "${FAILED_COUNT:-0}" == "0" ]]; then
+          echo "result=success" >> $GITHUB_OUTPUT
+          echo "✅ All tests passed"
+        else
+          echo "result=failure" >> $GITHUB_OUTPUT
+          echo "❌ Some tests failed"
+        fi
+
+branding:
+  icon: 'check-circle'
+  color: 'green' 
