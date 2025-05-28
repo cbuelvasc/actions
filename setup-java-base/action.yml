@@ -1,0 +1,64 @@
+name: 'Setup Java Base Environment'
+description: 'Base Java setup with validation and caching strategy for Spring Boot applications'
+author: 'Carmelo Buelvas Comas'
+
+inputs:
+  java-distribution:
+    description: 'Java distribution (temurin, corretto, microsoft, oracle)'
+    required: false
+    default: 'temurin'
+    
+  java-version:
+    description: 'Java version to set up'
+    required: false
+    default: '21'
+    
+  spring-profiles:
+    description: 'Spring profiles to activate'
+    required: false
+    default: 'test'
+
+outputs:
+  java-home:
+    description: 'Java installation path'
+    value: ${{ steps.java-setup.outputs.path }}
+    
+  java-version:
+    description: 'Installed Java version'
+    value: ${{ steps.java-setup.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate Java inputs
+      shell: bash
+      run: |
+        echo "=== Validating Java Inputs ==="
+        
+        # Validate Java version format
+        if ! [[ "${{ inputs.java-version }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.java-version }}" -lt 8 ]]; then
+          echo "❌ Error: java-version must be a valid Java version (8 or higher)"
+          echo "   Provided: '${{ inputs.java-version }}'"
+          exit 1
+        fi
+        echo "✅ Java version: ${{ inputs.java-version }}"
+        
+        echo "=== Java input validation completed ==="
+
+    - name: Setup Java
+      id: java-setup
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+
+    - name: Configure Spring profiles
+      shell: bash
+      run: |
+        echo "=== Configuring Spring Profiles ==="
+        echo "SPRING_PROFILES_ACTIVE=${{ inputs.spring-profiles }}" >> $GITHUB_ENV
+        echo "✅ Spring profiles: ${{ inputs.spring-profiles }}"
+
+branding:
+  icon: 'settings'
+  color: 'blue' 
