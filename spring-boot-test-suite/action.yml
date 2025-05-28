@@ -162,7 +162,7 @@ runs:
     - name: Setup Java and Gradle Environment
       id: setup-gradle
       if: inputs.build-tool == 'gradle'
-      uses: ./setup-java-gradle-env
+      uses: cbuelvasc/actions/setup-java-gradle-env@master
       with:
         java-version: ${{ inputs.java-version }}
         java-distribution: ${{ inputs.java-distribution }}
@@ -174,7 +174,7 @@ runs:
     - name: Setup Java and Maven Environment
       id: setup-maven
       if: inputs.build-tool == 'maven'
-      uses: ./setup-java-maven-env
+      uses: cbuelvasc/actions/setup-java-maven-env@master
       with:
         java-version: ${{ inputs.java-version }}
         java-distribution: ${{ inputs.java-distribution }}
