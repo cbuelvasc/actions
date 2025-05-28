@@ -1,0 +1,98 @@
+name: 'Cache Manager'
+description: 'Unified cache management for Maven and Gradle builds'
+author: 'Carmelo Buelvas Comas'
+
+inputs:
+  build-tool:
+    description: 'Build tool (maven or gradle)'
+    required: true
+    
+  cache-strategy:
+    description: 'Cache strategy (dependencies-cache, build-cache, all, none)'
+    required: false
+    default: 'all'
+    
+  cache-key-suffix:
+    description: 'Additional suffix for cache key customization'
+    required: false
+    default: ''
+
+outputs:
+  cache-hit:
+    description: 'Indicates if cache was found'
+    value: ${{ steps.cache-deps.outputs.cache-hit || steps.cache-build.outputs.cache-hit }}
+    
+  cache-key:
+    description: 'Cache key used for dependencies'
+    value: ${{ steps.cache-info.outputs.cache-key }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate cache inputs
+      shell: bash
+      run: |
+        echo "=== Validating Cache Inputs ==="
+        
+        # Validate build tool
+        if [[ "${{ inputs.build-tool }}" != "maven" && "${{ inputs.build-tool }}" != "gradle" ]]; then
+          echo "❌ Error: build-tool must be either 'maven' or 'gradle'"
+          echo "   Provided: '${{ inputs.build-tool }}'"
+          exit 1
+        fi
+        echo "✅ Build tool: ${{ inputs.build-tool }}"
+        
+        # Validate cache strategy
+        valid_strategies=("dependencies-cache" "build-cache" "all" "none")
+        if [[ ! " ${valid_strategies[@]} " =~ " ${{ inputs.cache-strategy }} " ]]; then
+          echo "❌ Error: cache-strategy must be one of: ${valid_strategies[*]}"
+          echo "   Provided: '${{ inputs.cache-strategy }}'"
+          exit 1
+        fi
+        echo "✅ Cache strategy: ${{ inputs.cache-strategy }}"
+
+    - name: Generate cache configuration
+      id: cache-info
+      shell: bash
+      run: |
+        echo "=== Generating Cache Configuration ==="
+        
+        if [[ "${{ inputs.build-tool }}" == "gradle" ]]; then
+          cache_key="gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/gradle.properties') }}${{ inputs.cache-key-suffix }}"
+        else
+          cache_key="maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}${{ inputs.cache-key-suffix }}"
+        fi
+        
+        echo "cache-key=$cache_key" >> $GITHUB_OUTPUT
+        echo "📦 Cache key: $cache_key"
+
+    - name: Cache dependencies
+      id: cache-deps
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'dependencies-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ inputs.build-tool == 'gradle' && '~/.gradle/caches' || '~/.m2/repository' }}
+          ${{ inputs.build-tool == 'gradle' && '~/.gradle/wrapper' || '~/.m2/wrapper' }}
+          ${{ inputs.build-tool == 'gradle' && '.gradle/caches' || '' }}
+        key: ${{ steps.cache-info.outputs.cache-key }}
+        restore-keys: |
+          ${{ inputs.build-tool }}-${{ runner.os }}-${{ hashFiles(inputs.build-tool == 'gradle' && '**/*.gradle*' || '**/pom.xml') }}-
+          ${{ inputs.build-tool }}-${{ runner.os }}-
+
+    - name: Cache build outputs
+      id: cache-build
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'build-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ inputs.build-tool == 'gradle' && '~/.gradle/build-cache' || '~/.m2/build-cache' }}
+          ${{ inputs.build-tool == 'gradle' && '.gradle/build-cache' || 'target/maven-archiver' }}
+          ${{ inputs.build-tool == 'gradle' && '' || 'target/maven-status' }}
+        key: ${{ inputs.build-tool }}-build-cache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          ${{ inputs.build-tool }}-build-cache-${{ runner.os }}-
+
+branding:
+  icon: 'archive'
+  color: 'purple' 
