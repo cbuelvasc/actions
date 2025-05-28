@@ -3,7 +3,7 @@ description: 'Comprehensive testing action for Spring Boot applications with cov
 author: 'Carmelo Buelvas Comas'
 
 inputs:
-  # Standard Java/Build inputs (ordered alphabetically)
+  # Standard Java/Build inputs (reutilizados desde setup actions)
   build-tool:
     description: 'Build tool to use (maven or gradle)'
     required: false
@@ -33,6 +33,27 @@ inputs:
     description: 'Working directory for the project'
     required: false
     default: '.'
+    
+  # Build tool specific inputs
+  gradle-args:
+    description: 'Additional Gradle arguments'
+    required: false
+    default: '--no-daemon --parallel'
+    
+  jvm-args:
+    description: 'Additional JVM arguments for Gradle'
+    required: false
+    default: '-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
+    
+  maven-args:
+    description: 'Additional Maven arguments'
+    required: false
+    default: '-T 1C --no-transfer-progress'
+    
+  maven-repositories:
+    description: 'Additional Maven repositories (JSON array format)'
+    required: false
+    default: '[]'
     
   # Test-specific inputs (ordered alphabetically)
   coverage-enabled:
@@ -85,7 +106,15 @@ outputs:
     description: 'Code coverage percentage'
     value: ${{ steps.coverage-report.outputs.coverage }}
     
-  # Secondary outputs
+  # Secondary outputs from setup actions
+  cache-hit:
+    description: 'Indicates if build cache was found'
+    value: ${{ steps.setup-gradle.outputs.cache-hit || steps.setup-maven.outputs.cache-hit }}
+    
+  build-tool-version:
+    description: 'Installed build tool version'
+    value: ${{ steps.setup-gradle.outputs.gradle-version || steps.setup-maven.outputs.maven-version }}
+    
   failed-test-count:
     description: 'Number of failed tests'
     value: ${{ steps.test-summary.outputs.failed-count }}
@@ -97,11 +126,11 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # 1. Input validation
-    - name: Validate inputs
+    # 1. Input validation (solo para parámetros específicos de testing)
+    - name: Validate test-specific inputs
       shell: bash
       run: |
-        echo "=== Validating Action Inputs ==="
+        echo "=== Validating Test-Specific Inputs ==="
         
         # Validate build tool
         if [[ "${{ inputs.build-tool }}" != "maven" && "${{ inputs.build-tool }}" != "gradle" ]]; then
@@ -127,56 +156,34 @@ runs:
         fi
         echo "✅ Coverage threshold: ${{ inputs.coverage-threshold }}%"
         
-        echo "=== Input validation completed ==="
+        echo "=== Test-specific input validation completed ==="
 
-    # 2. Setup Java environment
-    - name: Setup Java
-      id: java-setup
-      uses: actions/setup-java@v4
+    # 2. Setup build environment based on build tool
+    - name: Setup Java and Gradle Environment
+      id: setup-gradle
+      if: inputs.build-tool == 'gradle'
+      uses: ./setup-java-gradle-env
       with:
         java-version: ${{ inputs.java-version }}
-        distribution: ${{ inputs.java-distribution }}
+        java-distribution: ${{ inputs.java-distribution }}
+        spring-profiles: ${{ inputs.spring-profiles }}
+        gradle-args: ${{ inputs.gradle-args }}
+        jvm-args: ${{ inputs.jvm-args }}
+        cache-strategy: ${{ inputs.cache-enabled == 'true' && 'all' || 'none' }}
 
-    # 3. Cache management
-    - name: Cache Maven dependencies
-      id: maven-cache
-      if: inputs.build-tool == 'maven' && inputs.cache-enabled == 'true'
-      uses: actions/cache@v4
+    - name: Setup Java and Maven Environment
+      id: setup-maven
+      if: inputs.build-tool == 'maven'
+      uses: ./setup-java-maven-env
       with:
-        path: ~/.m2/repository
-        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ inputs.java-version }}
-        restore-keys: |
-          ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-
-          ${{ runner.os }}-maven-
+        java-version: ${{ inputs.java-version }}
+        java-distribution: ${{ inputs.java-distribution }}
+        spring-profiles: ${{ inputs.spring-profiles }}
+        maven-args: ${{ inputs.maven-args }}
+        maven-repositories: ${{ inputs.maven-repositories }}
+        cache-strategy: ${{ inputs.cache-enabled == 'true' && 'all' || 'none' }}
 
-    - name: Cache Gradle dependencies
-      id: gradle-cache
-      if: inputs.build-tool == 'gradle' && inputs.cache-enabled == 'true'
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.gradle/caches
-          ~/.gradle/wrapper
-          .gradle/caches
-        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}-${{ inputs.java-version }}
-        restore-keys: |
-          ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}-
-          ${{ runner.os }}-gradle-
-
-    # 4. Prepare build environment
-    - name: Make gradlew executable
-      if: inputs.build-tool == 'gradle'
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        if [[ -f gradlew ]]; then
-          chmod +x gradlew
-          echo "✅ Made gradlew executable"
-        else
-          echo "⚠️  No gradlew found, will use system gradle"
-        fi
-
-    # 5. Test execution
+    # 3. Test execution
     - name: Run tests with Maven
       if: inputs.build-tool == 'maven' && inputs.test-command == ''
       shell: bash
@@ -204,8 +211,13 @@ runs:
           echo "✅ Coverage enabled"
         fi
         
-        echo "Executing: mvn clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS"
-        mvn clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS
+        MAVEN_CMD="mvn"
+        if [ -f mvnw ]; then
+          MAVEN_CMD="./mvnw"
+        fi
+        
+        echo "Executing: $MAVEN_CMD clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS ${{ inputs.maven-args }}"
+        $MAVEN_CMD clean $TEST_GOALS $COVERAGE_PROFILE $MAVEN_OPTS ${{ inputs.maven-args }}
 
     - name: Run tests with Gradle
       if: inputs.build-tool == 'gradle' && inputs.test-command == ''
@@ -238,8 +250,8 @@ runs:
           GRADLE_CMD="gradle"
         fi
         
-        echo "Executing: $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS"
-        $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS
+        echo "Executing: $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS ${{ inputs.gradle-args }}"
+        $GRADLE_CMD clean $TEST_TASKS $GRADLE_OPTS ${{ inputs.gradle-args }}
 
     - name: Run custom test command
       if: inputs.test-command != ''
@@ -252,7 +264,7 @@ runs:
         echo "Command: ${{ inputs.test-command }}"
         ${{ inputs.test-command }}
 
-    # 6. Generate reports and outputs
+    # 4. Generate reports and outputs
     - name: Generate test summary
       id: test-summary
       shell: bash

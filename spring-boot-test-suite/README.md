@@ -2,11 +2,15 @@
 
 A comprehensive GitHub Action for running tests in Spring Boot applications with support for code coverage, dependency caching, and detailed reporting.
 
+**🔄 This action now integrates with both `setup-java-gradle-env` and `setup-java-maven-env` to provide optimized build environments for both build tools.**
+
 ## Features
 
 - ✅ Support for Maven and Gradle
+- ✅ **Integrated with `setup-java-gradle-env` for optimized Gradle builds**
+- ✅ **Integrated with `setup-java-maven-env` for optimized Maven builds**
 - ✅ Automatic Java setup (Java 8-21)
-- ✅ Intelligent dependency caching
+- ✅ Intelligent dependency caching with enhanced strategies
 - ✅ Code coverage reports (JaCoCo)
 - ✅ Parallel test execution
 - ✅ Integration tests
@@ -14,6 +18,8 @@ A comprehensive GitHub Action for running tests in Spring Boot applications with
 - ✅ Coverage threshold validation
 - ✅ Spring Profiles support
 - ✅ Customizable test commands
+- ✅ **Advanced JVM tuning for better performance**
+- ✅ **Unified build environment setup**
 
 ## Basic Usage
 
@@ -32,13 +38,15 @@ jobs:
         uses: ./actions/spring-boot-test-suite
         with:
           java-version: '21'
-          build-tool: 'gradle'
+          build-tool: 'gradle'  # or 'maven'
 ```
 
 ## Advanced Configuration
 
+### Gradle Project
+
 ```yaml
-name: Comprehensive Testing
+name: Comprehensive Testing - Gradle
 
 on: [push, pull_request]
 
@@ -62,6 +70,9 @@ jobs:
           parallel-tests: 'true'
           integration-tests: 'true'
           working-directory: './my-service'
+          # Advanced Gradle configuration
+          gradle-args: '--no-daemon --parallel --build-cache'
+          jvm-args: '-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
       
       - name: Use test outputs
         run: |
@@ -69,28 +80,90 @@ jobs:
           echo "Coverage: ${{ steps.tests.outputs.coverage-percentage }}%"
           echo "Tests executed: ${{ steps.tests.outputs.test-count }}"
           echo "Failed tests: ${{ steps.tests.outputs.failed-test-count }}"
+          echo "Cache hit: ${{ steps.tests.outputs.cache-hit }}"
+          echo "Build tool version: ${{ steps.tests.outputs.build-tool-version }}"
+```
+
+### Maven Project
+
+```yaml
+name: Comprehensive Testing - Maven
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Run Spring Boot Test Suite
+        id: tests
+        uses: ./actions/spring-boot-test-suite
+        with:
+          java-version: '21'
+          java-distribution: 'temurin'
+          build-tool: 'maven'
+          coverage-enabled: 'true'
+          coverage-threshold: '85'
+          fail-on-coverage-threshold: 'true'
+          spring-profiles: 'test,integration'
+          parallel-tests: 'true'
+          integration-tests: 'true'
+          working-directory: './my-service'
+          # Advanced Maven configuration
+          maven-args: '-T 2C --no-transfer-progress --batch-mode'
+          maven-repositories: |
+            [
+              "https://repo.spring.io/milestone"
+            ]
 ```
 
 ## Inputs
 
+### Standard Build Inputs
+
 | Input | Description | Required | Default Value |
 |-------|-------------|----------|---------------|
 | `java-version` | Java version to use (8, 11, 17, 21) | No | `'21'` |
-| `java-distribution` | Java distribution (temurin, adopt, etc.) | No | `'temurin'` |
+| `java-distribution` | Java distribution (temurin, corretto, microsoft, oracle) | No | `'temurin'` |
 | `build-tool` | Build tool (`maven` or `gradle`) | No | `'gradle'` |
+| `cache-enabled` | Enable dependency caching | No | `'true'` |
+| `working-directory` | Working directory for the project | No | `'.'` |
+| `spring-profiles` | Spring profiles to activate during tests | No | `'test'` |
+
+### Advanced Build Tool Inputs
+
+#### Gradle-Specific *(Inherited from setup-java-gradle-env)*
+
+| Input | Description | Required | Default Value |
+|-------|-------------|----------|---------------|
+| `gradle-args` | Additional Gradle arguments | No | `'--no-daemon --parallel'` |
+| `jvm-args` | Additional JVM arguments for Gradle | No | `'-Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'` |
+
+#### Maven-Specific *(Inherited from setup-java-maven-env)*
+
+| Input | Description | Required | Default Value |
+|-------|-------------|----------|---------------|
+| `maven-args` | Additional Maven arguments | No | `'-T 1C --no-transfer-progress'` |
+| `maven-repositories` | Additional Maven repositories (JSON array format) | No | `'[]'` |
+
+### Test-Specific Inputs
+
+| Input | Description | Required | Default Value |
+|-------|-------------|----------|---------------|
 | `test-command` | Custom command to run tests | No | `''` |
 | `coverage-enabled` | Enable coverage reports | No | `'true'` |
 | `coverage-format` | Coverage report format (`jacoco`, `cobertura`) | No | `'jacoco'` |
 | `fail-on-coverage-threshold` | Fail if coverage is below threshold | No | `'false'` |
 | `coverage-threshold` | Minimum coverage percentage required | No | `'80'` |
-| `cache-enabled` | Enable dependency caching | No | `'true'` |
-| `working-directory` | Working directory for the project | No | `'.'` |
-| `spring-profiles` | Spring profiles to activate during tests | No | `'test'` |
 | `parallel-tests` | Enable parallel test execution | No | `'true'` |
 | `integration-tests` | Run integration tests | No | `'true'` |
 | `publish-test-results` | Publish test results as GitHub check | No | `'true'` |
 
 ## Outputs
+
+### Primary Outputs
 
 | Output | Description |
 |--------|-------------|
@@ -99,16 +172,52 @@ jobs:
 | `test-count` | Total number of tests executed |
 | `failed-test-count` | Number of failed tests |
 
+### Build Environment Outputs *(From setup actions)*
+
+| Output | Description |
+|--------|-------------|
+| `cache-hit` | Indicates if build cache was found |
+| `build-tool-version` | Installed build tool version (Gradle or Maven) |
+
 ## Usage Examples
 
-### Simple Maven Project
+### High-Performance Gradle Testing
 
 ```yaml
-- name: Test Maven Project
+- name: High-Performance Gradle Tests
+  uses: ./actions/spring-boot-test-suite
+  with:
+    build-tool: 'gradle'
+    java-version: '21'
+    gradle-args: '--no-daemon --parallel --build-cache --configuration-cache'
+    jvm-args: '-Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=100'
+    parallel-tests: 'true'
+```
+
+### High-Performance Maven Testing
+
+```yaml
+- name: High-Performance Maven Tests
   uses: ./actions/spring-boot-test-suite
   with:
     build-tool: 'maven'
-    java-version: '17'
+    java-version: '21'
+    maven-args: '-T 4C --no-transfer-progress --batch-mode'
+    parallel-tests: 'true'
+```
+
+### Maven with Custom Repositories
+
+```yaml
+- name: Maven Tests with Custom Repos
+  uses: ./actions/spring-boot-test-suite
+  with:
+    build-tool: 'maven'
+    maven-repositories: |
+      [
+        "https://nexus.company.com/repository/maven-public/",
+        "https://repo.spring.io/milestone"
+      ]
 ```
 
 ### Gradle Project with Strict Coverage
@@ -121,6 +230,7 @@ jobs:
     coverage-enabled: 'true'
     coverage-threshold: '90'
     fail-on-coverage-threshold: 'true'
+    gradle-args: '--no-daemon --parallel'
 ```
 
 ### Multiple Services in Monorepo
@@ -128,16 +238,22 @@ jobs:
 ```yaml
 strategy:
   matrix:
-    service: [user-service, order-service, payment-service]
+    service: 
+      - { name: user-service, tool: gradle }
+      - { name: order-service, tool: maven }
+      - { name: payment-service, tool: gradle }
 
 steps:
   - uses: actions/checkout@v4
   
-  - name: Test ${{ matrix.service }}
+  - name: Test ${{ matrix.service.name }}
     uses: ./actions/spring-boot-test-suite
     with:
-      working-directory: './${{ matrix.service }}'
+      working-directory: './${{ matrix.service.name }}'
+      build-tool: ${{ matrix.service.tool }}
       spring-profiles: 'test,docker'
+      gradle-args: '--no-daemon --parallel --max-workers=4'
+      maven-args: '-T 2C --no-transfer-progress'
 ```
 
 ### Custom Test Command
@@ -158,6 +274,33 @@ steps:
     integration-tests: 'false'
     parallel-tests: 'true'
 ```
+
+## Architecture & Integration
+
+This action is designed with a **modular architecture** that automatically chooses the appropriate setup action based on the build tool:
+
+### For Gradle Projects
+- **Uses `setup-java-gradle-env`** for environment setup, caching, and Gradle configuration
+- Inherits all optimization features from the base action
+- Supports advanced Gradle features like build cache and configuration cache
+
+### For Maven Projects  
+- **Uses `setup-java-maven-env`** for environment setup, caching, and Maven configuration
+- Inherits Maven-specific optimizations and repository management
+- Supports parallel builds and custom repository configuration
+
+### Unified Testing Layer
+- **Consistent test execution** regardless of build tool
+- **Unified coverage reporting** with JaCoCo integration
+- **Common output format** for both Maven and Gradle
+
+### Benefits of Integration
+- ✅ **No duplication** of Java/build tool setup code
+- ✅ **Enhanced caching strategies** for both Maven and Gradle
+- ✅ **Consistent build environment** across different projects
+- ✅ **Advanced performance tuning** for both build tools
+- ✅ **Automatic optimization** based on build tool choice
+- ✅ **Unified interface** with build-tool-specific optimizations
 
 ## Project Configuration
 
@@ -271,56 +414,81 @@ logging:
     com.xeppelin: DEBUG
 ```
 
-## Dependency Caching
+## Performance Optimizations
 
-The action uses intelligent caching that:
+### Gradle Optimizations
+- **Build Cache**: Enabled with `--build-cache`
+- **Configuration Cache**: Support for `--configuration-cache`
+- **Parallel Execution**: Multi-threaded builds
+- **JVM Tuning**: Optimized heap and GC settings
 
-- Caches Maven dependencies in `~/.m2/repository`
-- Caches Gradle dependencies in `~/.gradle/caches` and `~/.gradle/wrapper`
-- Uses configuration file hashes as cache keys
-- Significantly reduces build times
-
-## Reports and Artifacts
-
-The action generates and stores:
-
-- **Coverage reports**: Uploaded as GitHub artifacts
-- **Test results**: Published as GitHub checks
-- **Detailed logs**: Include execution information
+### Maven Optimizations
+- **Parallel Builds**: `-T` flag for multi-threading
+- **Dependency Pre-download**: Automatic `dependency:go-offline`
+- **Transfer Progress**: Disabled for cleaner logs
+- **Build Cache**: Maven build artifact caching
 
 ## Best Practices
 
-1. **Java Version**: Use Java 21 for better performance
-2. **Parallel Tests**: Enable for large projects
-3. **Coverage Thresholds**: Set realistic goals (80-90%)
-4. **Dedicated Profiles**: Use dedicated profiles for testing
-5. **Caching**: Always enabled for better performance
-6. **Monitoring**: Use outputs to create metrics
+### Build Tool Selection
+1. **Gradle**: Better for complex builds, microservices, and performance
+2. **Maven**: Better for enterprise environments and standardization
+3. **Consistency**: Use the same tool across your organization
+
+### Performance
+1. **Java 21**: Use latest LTS for better performance
+2. **Parallel Tests**: Enable for large test suites
+3. **Caching**: Always enable for CI/CD pipelines
+4. **Resource Allocation**: Tune JVM/Maven settings based on project size
+
+### Reliability
+1. **Pin Versions**: Use specific Java and build tool versions
+2. **Use Wrappers**: Prefer `gradlew`/`mvnw` over system tools
+3. **Set Profiles**: Use dedicated profiles for testing
+4. **Monitor Coverage**: Set appropriate thresholds
 
 ## Troubleshooting
 
-### Tests Fail Unexpectedly
+### Build Tool Detection Issues
+
+The action automatically detects the build tool, but you can force it:
 
 ```yaml
-- name: Debug Test Failures
+- name: Force Build Tool
   uses: ./actions/spring-boot-test-suite
   with:
-    test-command: './gradlew test --info --stacktrace'
-    publish-test-results: 'true'
+    build-tool: 'maven'  # or 'gradle'
 ```
 
 ### Memory Issues
 
+For large projects:
+
 ```yaml
-- name: Tests with More Memory
+# Gradle
+- name: High Memory Gradle
   uses: ./actions/spring-boot-test-suite
   with:
-    test-command: './gradlew test -Xmx2g'
+    build-tool: 'gradle'
+    jvm-args: '-Xmx8g -XX:MaxMetaspaceSize=1g'
+
+# Maven  
+- name: High Memory Maven
+  uses: ./actions/spring-boot-test-suite
+  with:
+    build-tool: 'maven'
+    maven-args: '-T 1C -Xmx6g'
 ```
 
-### Coverage Not Generated
+### Cache Issues
 
-Verify that:
-- The JaCoCo plugin is properly configured
-- Tests run before the report
-- XML coverage files are generated in the expected location
+Debug caching problems:
+
+```yaml
+- name: Debug Cache
+  uses: ./actions/spring-boot-test-suite
+  with:
+    cache-enabled: 'false'  # Temporarily disable
+```
+
+This action provides a unified interface for testing Spring Boot applications regardless of the build tool, with optimized performance and comprehensive feature set.

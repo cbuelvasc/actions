@@ -1,0 +1,276 @@
+name: 'Setup Java Maven Environment'
+description: 'Sets up Java 21 and Maven environment for Spring Boot applications with cache optimizations'
+author: 'Carmelo Buelvas Comas'
+
+inputs:
+  # Standard Java/Build inputs (ordered alphabetically)
+  cache-strategy:
+    description: 'Cache strategy (maven-cache, dependencies-cache, all, none)'
+    required: false
+    default: 'all'
+    
+  java-distribution:
+    description: 'Java distribution (temurin, corretto, microsoft, oracle)'
+    required: false
+    default: 'temurin'
+    
+  java-version:
+    description: 'Java version to set up'
+    required: false
+    default: '21'
+    
+  maven-args:
+    description: 'Additional Maven arguments'
+    required: false
+    default: '-T 1C --no-transfer-progress'
+    
+  maven-repositories:
+    description: 'Additional Maven repositories (JSON array format)'
+    required: false
+    default: '[]'
+    
+  maven-version:
+    description: 'Specific Maven version (optional, uses default by default)'
+    required: false
+    default: 'default'
+    
+  spring-profiles:
+    description: 'Spring profiles to activate during build'
+    required: false
+    default: 'test'
+
+outputs:
+  # Primary outputs
+  cache-hit:
+    description: 'Indicates if Maven cache was found'
+    value: ${{ steps.maven-cache.outputs.cache-hit }}
+    
+  cache-key:
+    description: 'Cache key used for dependencies'
+    value: ${{ steps.cache-info.outputs.cache-key }}
+    
+  maven-version:
+    description: 'Installed Maven version'
+    value: ${{ steps.maven-info.outputs.maven-version }}
+    
+  # Secondary outputs
+  java-home:
+    description: 'Java installation path'
+    value: ${{ steps.java-setup.outputs.path }}
+    
+  java-version:
+    description: 'Installed Java version'
+    value: ${{ steps.java-setup.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    # 1. Input validation
+    - name: Validate inputs
+      shell: bash
+      run: |
+        echo "=== Validating Action Inputs ==="
+        
+        # Validate cache strategy
+        if [[ "${{ inputs.cache-strategy }}" != "maven-cache" && "${{ inputs.cache-strategy }}" != "dependencies-cache" && "${{ inputs.cache-strategy }}" != "all" && "${{ inputs.cache-strategy }}" != "none" ]]; then
+          echo "❌ Error: cache-strategy must be one of: maven-cache, dependencies-cache, all, none"
+          echo "   Provided: '${{ inputs.cache-strategy }}'"
+          exit 1
+        fi
+        echo "✅ Cache strategy: ${{ inputs.cache-strategy }}"
+        
+        # Validate Java version format
+        if ! [[ "${{ inputs.java-version }}" =~ ^[0-9]+$ ]] || [[ "${{ inputs.java-version }}" -lt 8 ]]; then
+          echo "❌ Error: java-version must be a valid Java version (8 or higher)"
+          echo "   Provided: '${{ inputs.java-version }}'"
+          exit 1
+        fi
+        echo "✅ Java version: ${{ inputs.java-version }}"
+        
+        # Validate Maven repositories JSON
+        if ! echo '${{ inputs.maven-repositories }}' | jq empty 2>/dev/null; then
+          echo "❌ Error: maven-repositories must be valid JSON array"
+          echo "   Provided: '${{ inputs.maven-repositories }}'"
+          exit 1
+        fi
+        echo "✅ Maven repositories: ${{ inputs.maven-repositories }}"
+        
+        echo "=== Input validation completed ==="
+
+    # 2. Setup Java environment
+    - name: Setup Java
+      id: java-setup
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+        cache: maven
+
+    # 3. Generate cache configuration
+    - name: Generate cache key
+      id: cache-info
+      shell: bash
+      run: |
+        echo "=== Generating Cache Configuration ==="
+        
+        # Generate cache key based on Maven files and configuration
+        cache_key="maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/.mvn/wrapper/maven-wrapper.properties') }}-${{ inputs.maven-version }}-${{ inputs.maven-args }}"
+        echo "cache-key=$cache_key" >> $GITHUB_OUTPUT
+        echo "📦 Cache key: $cache_key"
+
+    # 4. Cache management
+    - name: Cache Maven dependencies
+      id: maven-cache
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'dependencies-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.m2/repository
+          ~/.m2/wrapper
+        key: ${{ steps.cache-info.outputs.cache-key }}
+        restore-keys: |
+          maven-${{ runner.os }}-${{ hashFiles('**/pom.xml') }}-
+          maven-${{ runner.os }}-
+
+    - name: Cache Maven build cache
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'maven-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.m2/build-cache
+          target/maven-archiver
+          target/maven-status
+        key: maven-build-cache-${{ runner.os }}-${{ github.sha }}
+        restore-keys: |
+          maven-build-cache-${{ runner.os }}-
+
+    # 5. Setup Maven
+    - name: Setup Maven
+      if: inputs.maven-version != 'default'
+      uses: stCarolas/setup-maven@v4.5
+      with:
+        maven-version: ${{ inputs.maven-version }}
+
+    # 6. Configure build environment
+    - name: Configure Maven settings
+      shell: bash
+      run: |
+        echo "=== Configuring Maven Settings ==="
+        
+        # Create .m2 directory if it doesn't exist
+        mkdir -p ~/.m2
+        
+        # Create settings.xml if it doesn't exist
+        if [ ! -f ~/.m2/settings.xml ]; then
+          cat > ~/.m2/settings.xml << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 
+                                      http://maven.apache.org/xsd/settings-1.0.0.xsd">
+          <localRepository/>
+          <interactiveMode>false</interactiveMode>
+          <usePluginRegistry>false</usePluginRegistry>
+          <offline>false</offline>
+        </settings>
+        EOF
+          echo "✅ Created ~/.m2/settings.xml"
+        fi
+        
+        # Configure Maven opts
+        echo "MAVEN_OPTS=-Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200" >> $GITHUB_ENV
+        echo "✅ Maven opts: -Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+        
+        # Configure Spring profiles for tests
+        echo "SPRING_PROFILES_ACTIVE=${{ inputs.spring-profiles }}" >> $GITHUB_ENV
+        echo "✅ Spring profiles: ${{ inputs.spring-profiles }}"
+
+    - name: Configure additional Maven repositories
+      if: inputs.maven-repositories != '[]'
+      shell: bash
+      run: |
+        echo "=== Configuring Additional Maven Repositories ==="
+        
+        # Backup existing settings.xml
+        cp ~/.m2/settings.xml ~/.m2/settings.xml.backup
+        
+        # Create temporary repositories section
+        cat << 'EOF' > /tmp/repositories.xml
+        <repositories>
+        EOF
+        
+        # Parse JSON and add repositories
+        echo '${{ inputs.maven-repositories }}' | jq -r '.[] | "<repository><id>repo-" + (. | gsub("[^a-zA-Z0-9]"; "-")) + "</id><url>" + . + "</url></repository>"' >> /tmp/repositories.xml
+        
+        cat << 'EOF' >> /tmp/repositories.xml
+        </repositories>
+        EOF
+        
+        # Insert repositories into settings.xml before closing </settings>
+        sed -i 's|</settings>|</settings>|' ~/.m2/settings.xml
+        sed -i 's|</settings>||' ~/.m2/settings.xml
+        cat /tmp/repositories.xml >> ~/.m2/settings.xml
+        echo '</settings>' >> ~/.m2/settings.xml
+        
+        # Show added repositories
+        echo "📦 Added repositories:"
+        echo '${{ inputs.maven-repositories }}' | jq -r '.[]'
+
+    # 7. Validation and setup completion
+    - name: Validate Maven setup
+      shell: bash
+      run: |
+        echo "=== Validating Maven Setup ==="
+        
+        # Validate Maven wrapper
+        if [ -f mvnw ]; then
+          chmod +x mvnw
+          echo "✅ Made mvnw executable"
+          MAVEN_VERSION=$(./mvnw --version | grep "Apache Maven" | cut -d' ' -f3)
+          echo "📦 Maven version (wrapper): $MAVEN_VERSION"
+        else
+          if command -v mvn &> /dev/null; then
+            MAVEN_VERSION=$(mvn --version | grep "Apache Maven" | cut -d' ' -f3)
+            echo "📦 Maven version (system): $MAVEN_VERSION"
+          else
+            echo "❌ Error: Neither mvnw nor system maven found"
+            exit 1
+          fi
+        fi
+        
+        # Validate Java setup
+        echo "☕ Java version:"
+        java -version
+        echo "🏠 JAVA_HOME: $JAVA_HOME"
+        
+        echo "✅ Maven setup validation completed"
+
+    - name: Get Maven info
+      id: maven-info
+      shell: bash
+      run: |
+        if [ -f mvnw ]; then
+          maven_version=$(./mvnw --version | grep "Apache Maven" | cut -d' ' -f3)
+        else
+          maven_version=$(mvn --version | grep "Apache Maven" | cut -d' ' -f3)
+        fi
+        echo "maven-version=$maven_version" >> $GITHUB_OUTPUT
+        echo "📦 Final Maven version: $maven_version"
+
+    - name: Download dependencies
+      shell: bash
+      run: |
+        echo "=== Downloading Maven Dependencies ==="
+        
+        MAVEN_CMD="mvn"
+        if [ -f mvnw ]; then
+          MAVEN_CMD="./mvnw"
+        fi
+        
+        echo "Executing: $MAVEN_CMD dependency:go-offline ${{ inputs.maven-args }}"
+        $MAVEN_CMD dependency:go-offline ${{ inputs.maven-args }} -q
+        echo "✅ Dependencies downloaded"
+
+branding:
+  icon: 'package'
+  color: 'orange' 
