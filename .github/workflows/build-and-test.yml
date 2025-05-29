@@ -103,28 +103,26 @@ jobs:
       - name: Setup Java Maven Environment
         if: inputs.build-tool == 'maven'
         id: java-maven-setup
-        uses: ./setup-java-maven-env
+        uses: cbuelvasc/actions/setup-java-maven-env@master
         with:
           java-version: ${{ inputs.java-version }}
           java-distribution: ${{ inputs.java-distribution }}
-          working-directory: ${{ inputs.working-directory }}
-          cache-enabled: ${{ inputs.cache-enabled }}
+          cache-strategy: ${{ inputs.cache-enabled && 'all' || 'none' }}
           maven-args: ${{ inputs.maven-args }}
       
       - name: Setup Java Gradle Environment
         if: inputs.build-tool == 'gradle'
         id: java-gradle-setup
-        uses: ./setup-java-gradle-env
+        uses: cbuelvasc/actions/setup-java-gradle-env@master
         with:
           java-version: ${{ inputs.java-version }}
           java-distribution: ${{ inputs.java-distribution }}
-          working-directory: ${{ inputs.working-directory }}
-          cache-enabled: ${{ inputs.cache-enabled }}
+          cache-strategy: ${{ inputs.cache-enabled && 'all' || 'none' }}
           gradle-args: ${{ inputs.gradle-args }}
       
       - name: Run Spring Boot Test Suite
         id: test-suite
-        uses: ./spring-boot-test-suite
+        uses: cbuelvasc/actions/spring-boot-test-suite@master
         with:
           build-tool: ${{ inputs.build-tool }}
           java-version: ${{ inputs.java-version }}
