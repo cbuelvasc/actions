@@ -523,27 +523,6 @@ The `spring-boot-test-suite` action provides:
     fail-on-coverage-threshold: 'true'
 ```
 
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-1. **Cache not working**: Ensure your `pom.xml` or `build.gradle` files are in the repository root
-2. **Out of memory errors**: Increase JVM memory with `jvm-args` or `maven-args`
-3. **Tests failing**: Check that `spring-profiles` are correctly configured
-
-### Debug Mode
-
-Enable debug output by setting:
-
-```yaml
-- name: Setup with Debug
-  uses: cbuelvasc/actions/setup-java-gradle-env@main
-  with:
-    java-version: '21'
-  env:
-    ACTIONS_STEP_DEBUG: true
-```
-
 ## 📚 Action Documentation
 
 For detailed documentation on each action, including all inputs, outputs, and advanced usage:
