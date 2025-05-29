@@ -1,0 +1,638 @@
+name: Test Actions
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - '**/action.yml'
+      - '**/action.yaml'
+      - '.github/workflows/test-actions.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/action.yml'
+      - '**/action.yaml'
+      - '.github/workflows/test-actions.yml'
+  workflow_dispatch:
+    inputs:
+      action-to-test:
+        description: 'Specific action to test (leave empty for all)'
+        required: false
+        type: string
+      test-type:
+        description: 'Type of test to run'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - quick
+          - integration
+
+env:
+  TEST_PROJECT_MAVEN: 'test-projects/maven-sample'
+  TEST_PROJECT_GRADLE: 'test-projects/gradle-sample'
+
+jobs:
+  # Setup test projects
+  setup-test-projects:
+    name: Setup Test Projects
+    runs-on: ubuntu-latest
+    outputs:
+      maven-project-created: ${{ steps.maven-setup.outputs.created }}
+      gradle-project-created: ${{ steps.gradle-setup.outputs.created }}
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Maven Test Project
+        id: maven-setup
+        run: |
+          echo "=== Creating Maven Test Project ==="
+          
+          mkdir -p ${{ env.TEST_PROJECT_MAVEN }}/src/main/java/com/test
+          mkdir -p ${{ env.TEST_PROJECT_MAVEN }}/src/test/java/com/test
+          
+          # Create pom.xml
+          cat > ${{ env.TEST_PROJECT_MAVEN }}/pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+                   https://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <parent>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-starter-parent</artifactId>
+              <version>3.2.0</version>
+              <relativePath/>
+            </parent>
+            <groupId>com.test</groupId>
+            <artifactId>test-app</artifactId>
+            <version>0.0.1-SNAPSHOT</version>
+            <packaging>jar</packaging>
+            <name>test-app</name>
+            <description>Test application for GitHub Actions</description>
+            
+            <properties>
+              <java.version>21</java.version>
+            </properties>
+            
+            <dependencies>
+              <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-web</artifactId>
+              </dependency>
+              <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-test</artifactId>
+                <scope>test</scope>
+              </dependency>
+            </dependencies>
+            
+            <build>
+              <plugins>
+                <plugin>
+                  <groupId>org.springframework.boot</groupId>
+                  <artifactId>spring-boot-maven-plugin</artifactId>
+                </plugin>
+              </plugins>
+            </build>
+          </project>
+          EOF
+          
+          # Create test application
+          cat > ${{ env.TEST_PROJECT_MAVEN }}/src/main/java/com/test/TestApplication.java << 'EOF'
+          package com.test;
+          
+          import org.springframework.boot.SpringApplication;
+          import org.springframework.boot.autoconfigure.SpringBootApplication;
+          import org.springframework.web.bind.annotation.GetMapping;
+          import org.springframework.web.bind.annotation.RestController;
+          
+          @SpringBootApplication
+          public class TestApplication {
+              public static void main(String[] args) {
+                  SpringApplication.run(TestApplication.class, args);
+              }
+          }
+          
+          @RestController
+          class TestController {
+              @GetMapping("/health")
+              public String health() {
+                  return "OK";
+              }
+          }
+          EOF
+          
+          # Create test
+          cat > ${{ env.TEST_PROJECT_MAVEN }}/src/test/java/com/test/TestApplicationTest.java << 'EOF'
+          package com.test;
+          
+          import org.junit.jupiter.api.Test;
+          import org.springframework.boot.test.context.SpringBootTest;
+          
+          @SpringBootTest
+          class TestApplicationTest {
+              @Test
+              void contextLoads() {
+                  // Test passes if context loads successfully
+              }
+          }
+          EOF
+          
+          echo "created=true" >> $GITHUB_OUTPUT
+          echo "✅ Maven test project created"
+
+      - name: Create Gradle Test Project
+        id: gradle-setup
+        run: |
+          echo "=== Creating Gradle Test Project ==="
+          
+          mkdir -p ${{ env.TEST_PROJECT_GRADLE }}/src/main/java/com/test
+          mkdir -p ${{ env.TEST_PROJECT_GRADLE }}/src/test/java/com/test
+          
+          # Create build.gradle
+          cat > ${{ env.TEST_PROJECT_GRADLE }}/build.gradle << 'EOF'
+          plugins {
+              id 'org.springframework.boot' version '3.2.0'
+              id 'io.spring.dependency-management' version '1.1.4'
+              id 'java'
+          }
+          
+          group = 'com.test'
+          version = '0.0.1-SNAPSHOT'
+          
+          java {
+              sourceCompatibility = '21'
+          }
+          
+          repositories {
+              mavenCentral()
+          }
+          
+          dependencies {
+              implementation 'org.springframework.boot:spring-boot-starter-web'
+              testImplementation 'org.springframework.boot:spring-boot-starter-test'
+          }
+          
+          tasks.named('test') {
+              useJUnitPlatform()
+          }
+          EOF
+          
+          # Create settings.gradle
+          cat > ${{ env.TEST_PROJECT_GRADLE }}/settings.gradle << 'EOF'
+          rootProject.name = 'test-app'
+          EOF
+          
+          # Create gradle wrapper properties
+          mkdir -p ${{ env.TEST_PROJECT_GRADLE }}/gradle/wrapper
+          cat > ${{ env.TEST_PROJECT_GRADLE }}/gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.5-bin.zip
+          networkTimeout=10000
+          validateDistributionUrl=true
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+          
+          # Copy test files from Maven project
+          cp ${{ env.TEST_PROJECT_MAVEN }}/src/main/java/com/test/TestApplication.java ${{ env.TEST_PROJECT_GRADLE }}/src/main/java/com/test/
+          cp ${{ env.TEST_PROJECT_MAVEN }}/src/test/java/com/test/TestApplicationTest.java ${{ env.TEST_PROJECT_GRADLE }}/src/test/java/com/test/
+          
+          echo "created=true" >> $GITHUB_OUTPUT
+          echo "✅ Gradle test project created"
+
+      - name: Upload Test Projects
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+  # Test setup-java-maven-env action
+  test-maven-env:
+    name: Test Maven Environment Setup
+    runs-on: ubuntu-latest
+    needs: setup-test-projects
+    if: github.event.inputs.action-to-test == '' || github.event.inputs.action-to-test == 'setup-java-maven-env'
+    strategy:
+      matrix:
+        java-version: ['17', '21']
+        cache-strategy: ['all', 'dependencies-cache', 'maven-cache', 'none']
+        maven-args: ['-T 1C --no-transfer-progress', '--batch-mode --quiet']
+      fail-fast: false
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Test Maven Environment Setup
+        id: maven-env
+        uses: ./setup-java-maven-env
+        with:
+          java-version: ${{ matrix.java-version }}
+          cache-strategy: ${{ matrix.cache-strategy }}
+          maven-args: ${{ matrix.maven-args }}
+          working-directory: ${{ env.TEST_PROJECT_MAVEN }}
+
+      - name: Validate Maven Setup
+        working-directory: ${{ env.TEST_PROJECT_MAVEN }}
+        run: |
+          echo "=== Validating Maven Setup ==="
+          
+          # Check Java version
+          java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2 | cut -d'.' -f1)
+          echo "Detected Java version: $java_version"
+          
+          if [[ "$java_version" != "${{ matrix.java-version }}" ]]; then
+            echo "❌ Java version mismatch. Expected: ${{ matrix.java-version }}, Got: $java_version"
+            exit 1
+          fi
+          
+          # Check Maven
+          if ! command -v mvn &> /dev/null; then
+            echo "❌ Maven not found"
+            exit 1
+          fi
+          
+          mvn_version=$(mvn --version | head -n1)
+          echo "Maven version: $mvn_version"
+          
+          # Test Maven build
+          echo "Testing Maven build..."
+          mvn clean compile ${{ matrix.maven-args }}
+          
+          echo "✅ Maven environment setup validated successfully"
+
+      - name: Validate Outputs
+        run: |
+          echo "=== Validating Action Outputs ==="
+          
+          echo "Java Version Output: ${{ steps.maven-env.outputs.java-version }}"
+          echo "Java Home Output: ${{ steps.maven-env.outputs.java-home }}"
+          echo "Maven Version Output: ${{ steps.maven-env.outputs.maven-version }}"
+          echo "Cache Key Output: ${{ steps.maven-env.outputs.cache-key }}"
+          echo "Cache Hit Output: ${{ steps.maven-env.outputs.cache-hit }}"
+          
+          # Validate outputs are not empty
+          if [[ -z "${{ steps.maven-env.outputs.java-version }}" ]]; then
+            echo "❌ java-version output is empty"
+            exit 1
+          fi
+          
+          echo "✅ All outputs validated"
+
+  # Test setup-java-gradle-env action
+  test-gradle-env:
+    name: Test Gradle Environment Setup
+    runs-on: ubuntu-latest
+    needs: setup-test-projects
+    if: github.event.inputs.action-to-test == '' || github.event.inputs.action-to-test == 'setup-java-gradle-env'
+    strategy:
+      matrix:
+        java-version: ['17', '21']
+        cache-strategy: ['all', 'dependencies-cache', 'gradle-cache', 'none']
+        gradle-args: ['--no-daemon --parallel', '--build-cache --configure-on-demand']
+      fail-fast: false
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Test Gradle Environment Setup
+        id: gradle-env
+        uses: ./setup-java-gradle-env
+        with:
+          java-version: ${{ matrix.java-version }}
+          cache-strategy: ${{ matrix.cache-strategy }}
+          gradle-args: ${{ matrix.gradle-args }}
+          working-directory: ${{ env.TEST_PROJECT_GRADLE }}
+
+      - name: Validate Gradle Setup
+        working-directory: ${{ env.TEST_PROJECT_GRADLE }}
+        run: |
+          echo "=== Validating Gradle Setup ==="
+          
+          # Check Java version
+          java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2 | cut -d'.' -f1)
+          echo "Detected Java version: $java_version"
+          
+          if [[ "$java_version" != "${{ matrix.java-version }}" ]]; then
+            echo "❌ Java version mismatch. Expected: ${{ matrix.java-version }}, Got: $java_version"
+            exit 1
+          fi
+          
+          # Check Gradle
+          if [[ -f "./gradlew" ]]; then
+            chmod +x ./gradlew
+            gradle_cmd="./gradlew"
+          else
+            gradle_cmd="gradle"
+          fi
+          
+          gradle_version=$($gradle_cmd --version | grep "Gradle" | head -n1)
+          echo "Gradle version: $gradle_version"
+          
+          # Test Gradle build
+          echo "Testing Gradle build..."
+          $gradle_cmd clean compileJava ${{ matrix.gradle-args }}
+          
+          echo "✅ Gradle environment setup validated successfully"
+
+  # Test spring-boot-test-suite action
+  test-spring-boot-suite:
+    name: Test Spring Boot Test Suite
+    runs-on: ubuntu-latest
+    needs: setup-test-projects
+    if: github.event.inputs.action-to-test == '' || github.event.inputs.action-to-test == 'spring-boot-test-suite'
+    strategy:
+      matrix:
+        build-tool: ['maven', 'gradle']
+        java-version: ['17', '21']
+        coverage-enabled: ['true', 'false']
+        integration-tests: ['true', 'false']
+      fail-fast: false
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Set Working Directory
+        id: workdir
+        run: |
+          if [[ "${{ matrix.build-tool }}" == "maven" ]]; then
+            echo "dir=${{ env.TEST_PROJECT_MAVEN }}" >> $GITHUB_OUTPUT
+          else
+            echo "dir=${{ env.TEST_PROJECT_GRADLE }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Test Spring Boot Test Suite
+        id: test-suite
+        uses: ./spring-boot-test-suite
+        with:
+          build-tool: ${{ matrix.build-tool }}
+          java-version: ${{ matrix.java-version }}
+          coverage-enabled: ${{ matrix.coverage-enabled }}
+          integration-tests: ${{ matrix.integration-tests }}
+          coverage-threshold: '80'
+          working-directory: ${{ steps.workdir.outputs.dir }}
+
+      - name: Validate Test Results
+        run: |
+          echo "=== Validating Test Results ==="
+          
+          echo "Tests Run: ${{ steps.test-suite.outputs.tests-run }}"
+          echo "Tests Passed: ${{ steps.test-suite.outputs.tests-passed }}"
+          echo "Tests Failed: ${{ steps.test-suite.outputs.tests-failed }}"
+          echo "Coverage Percentage: ${{ steps.test-suite.outputs.coverage-percentage }}"
+          
+          # Check that tests were actually run
+          tests_run="${{ steps.test-suite.outputs.tests-run }}"
+          if [[ -z "$tests_run" || "$tests_run" == "0" ]]; then
+            echo "❌ No tests were run"
+            exit 1
+          fi
+          
+          echo "✅ Test suite validation completed"
+
+  # Test docker-build action
+  test-docker-build:
+    name: Test Docker Build
+    runs-on: ubuntu-latest
+    needs: setup-test-projects
+    if: github.event.inputs.action-to-test == '' || github.event.inputs.action-to-test == 'docker-build'
+    strategy:
+      matrix:
+        build-tool: ['maven', 'gradle']
+        java-version: ['17', '21']
+        push: ['false']  # Don't actually push during tests
+      fail-fast: false
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Set Working Directory
+        id: workdir
+        run: |
+          if [[ "${{ matrix.build-tool }}" == "maven" ]]; then
+            echo "dir=${{ env.TEST_PROJECT_MAVEN }}" >> $GITHUB_OUTPUT
+          else
+            echo "dir=${{ env.TEST_PROJECT_GRADLE }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Dockerfile
+        run: |
+          cat > ${{ steps.workdir.outputs.dir }}/Dockerfile << 'EOF'
+          FROM openjdk:21-jre-slim
+          
+          WORKDIR /app
+          
+          # Copy the application jar
+          COPY target/*.jar app.jar 2>/dev/null || \
+          COPY build/libs/*.jar app.jar
+          
+          EXPOSE 8080
+          
+          ENTRYPOINT ["java", "-jar", "app.jar"]
+          EOF
+
+      - name: Test Docker Build
+        id: docker-build
+        uses: ./docker-build
+        with:
+          build-tool: ${{ matrix.build-tool }}
+          java-version: ${{ matrix.java-version }}
+          image-name: 'test-app'
+          image-tag: 'test'
+          push: ${{ matrix.push }}
+          working-directory: ${{ steps.workdir.outputs.dir }}
+
+      - name: Validate Docker Image
+        run: |
+          echo "=== Validating Docker Image ==="
+          
+          echo "Image Built: ${{ steps.docker-build.outputs.image-built }}"
+          echo "Image Name: ${{ steps.docker-build.outputs.image-name }}"
+          echo "Image Tag: ${{ steps.docker-build.outputs.image-tag }}"
+          
+          # Check if image exists
+          if ! docker images | grep -q "test-app"; then
+            echo "❌ Docker image not found"
+            exit 1
+          fi
+          
+          echo "✅ Docker build validation completed"
+
+  # Integration tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-maven-env, test-gradle-env, test-spring-boot-suite]
+    if: github.event.inputs.test-type != 'quick'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Test Complete Maven Pipeline
+        working-directory: ${{ env.TEST_PROJECT_MAVEN }}
+        run: |
+          echo "=== Testing Complete Maven Pipeline ==="
+          
+          # Setup environment
+          ../../../setup-java-maven-env \
+            --java-version 21 \
+            --cache-strategy all
+          
+          # Run tests with coverage
+          ../../../spring-boot-test-suite \
+            --build-tool maven \
+            --coverage-enabled true \
+            --coverage-threshold 50
+          
+          echo "✅ Maven pipeline integration test completed"
+
+      - name: Test Complete Gradle Pipeline
+        working-directory: ${{ env.TEST_PROJECT_GRADLE }}
+        run: |
+          echo "=== Testing Complete Gradle Pipeline ==="
+          
+          # Setup environment
+          ../../../setup-java-gradle-env \
+            --java-version 21 \
+            --cache-strategy all
+          
+          # Run tests with coverage
+          ../../../spring-boot-test-suite \
+            --build-tool gradle \
+            --coverage-enabled true \
+            --coverage-threshold 50
+          
+          echo "✅ Gradle pipeline integration test completed"
+
+  # Performance tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: setup-test-projects
+    if: github.event.inputs.test-type == 'full'
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Test Projects
+        uses: actions/download-artifact@v4
+        with:
+          name: test-projects
+          path: test-projects/
+
+      - name: Test Cache Performance
+        run: |
+          echo "=== Testing Cache Performance ==="
+          
+          # First run (cold cache)
+          start_time=$(date +%s)
+          ./setup-java-maven-env \
+            --java-version 21 \
+            --cache-strategy all \
+            --working-directory ${{ env.TEST_PROJECT_MAVEN }}
+          first_run_time=$(($(date +%s) - start_time))
+          
+          # Second run (warm cache)
+          start_time=$(date +%s)
+          ./setup-java-maven-env \
+            --java-version 21 \
+            --cache-strategy all \
+            --working-directory ${{ env.TEST_PROJECT_MAVEN }}
+          second_run_time=$(($(date +%s) - start_time))
+          
+          echo "First run: ${first_run_time}s"
+          echo "Second run: ${second_run_time}s"
+          
+          # Cache should improve performance
+          if [[ $second_run_time -ge $first_run_time ]]; then
+            echo "⚠️  Cache may not be working optimally"
+          else
+            echo "✅ Cache performance improvement detected"
+          fi
+
+  # Test cleanup
+  cleanup:
+    name: Cleanup Test Artifacts
+    runs-on: ubuntu-latest
+    needs: [test-maven-env, test-gradle-env, test-spring-boot-suite, test-docker-build]
+    if: always()
+    
+    steps:
+      - name: Cleanup Docker Images
+        run: |
+          echo "=== Cleaning up Docker images ==="
+          docker image prune -f || true
+          docker images | grep "test-app" | awk '{print $3}' | xargs docker rmi -f || true
+          echo "✅ Docker cleanup completed"
+
+  # Test summary
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-maven-env, test-gradle-env, test-spring-boot-suite, test-docker-build, integration-tests]
+    if: always()
+    
+    steps:
+      - name: Generate Test Summary
+        run: |
+          echo "=== Test Summary ==="
+          echo "| Action | Status |"
+          echo "|--------|--------|"
+          echo "| Maven Environment Setup | ${{ needs.test-maven-env.result }} |"
+          echo "| Gradle Environment Setup | ${{ needs.test-gradle-env.result }} |"
+          echo "| Spring Boot Test Suite | ${{ needs.test-spring-boot-suite.result }} |"
+          echo "| Docker Build | ${{ needs.test-docker-build.result }} |"
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |"
+          
+          # Check if any tests failed
+          if [[ "${{ needs.test-maven-env.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-gradle-env.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-spring-boot-suite.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-docker-build.result }}" == "failure" ]]; then
+            echo "❌ Some tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi

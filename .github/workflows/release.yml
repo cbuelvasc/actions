@@ -1,0 +1,362 @@
+name: Release Actions
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release-type:
+        description: 'Release type (major, minor, patch)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+env:
+  NODE_VERSION: '20'
+  JAVA_VERSION: '21'
+  
+jobs:
+  # Basic validation before release
+  validate-actions:
+    name: Validate Actions
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install action validator
+        run: npm install -g @github/action-validator
+
+      - name: Validate Action Metadata
+        run: |
+          echo "=== Validating Action Metadata ==="
+          
+          actions=(
+            "setup-java-maven-env"
+            "setup-java-gradle-env" 
+            "spring-boot-test-suite"
+            "docker-build"
+            "cache-manager"
+            "test-runner"
+          )
+          
+          for action in "${actions[@]}"; do
+            if [ -f "$action/action.yml" ]; then
+              echo "Validating $action..."
+              action-validator "$action/action.yml" || {
+                echo "❌ Validation failed for $action"
+                exit 1
+              }
+              echo "✅ $action is valid"
+            else
+              echo "⚠️  Skipping $action (action.yml not found)"
+            fi
+          done
+
+      - name: Setup Java for Testing
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Create Sample Test Project
+        run: |
+          mkdir -p test-projects/sample-project
+          cd test-projects/sample-project
+          
+          # Create a minimal pom.xml for Maven testing
+          cat > pom.xml << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+                   https://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>com.test</groupId>
+            <artifactId>sample-app</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+            
+            <properties>
+              <maven.compiler.source>21</maven.compiler.source>
+              <maven.compiler.target>21</maven.compiler.target>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+            </properties>
+          </project>
+          EOF
+          
+          # Create a minimal build.gradle for Gradle testing
+          cat > build.gradle << 'EOF'
+          plugins {
+              id 'java'
+          }
+          
+          group = 'com.test'
+          version = '1.0.0'
+          
+          java {
+              sourceCompatibility = '21'
+              targetCompatibility = '21'
+          }
+          
+          repositories {
+              mavenCentral()
+          }
+          EOF
+
+      - name: Test Maven Environment Setup
+        uses: ./setup-java-maven-env
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          working-directory: './test-projects/sample-project'
+        continue-on-error: true
+        id: test-maven
+
+      - name: Test Gradle Environment Setup
+        uses: ./setup-java-gradle-env
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          working-directory: './test-projects/sample-project'
+        continue-on-error: true
+        id: test-gradle
+
+      - name: Validate Action Tests
+        run: |
+          echo "=== Validating Action Test Results ==="
+          
+          if [[ "${{ steps.test-maven.outcome }}" == "failure" ]]; then
+            echo "❌ Maven environment setup failed"
+            exit 1
+          else
+            echo "✅ Maven environment setup succeeded"
+          fi
+          
+          if [[ "${{ steps.test-gradle.outcome }}" == "failure" ]]; then
+            echo "❌ Gradle environment setup failed"
+            exit 1
+          else
+            echo "✅ Gradle environment setup succeeded"
+          fi
+
+  # Generate changelog
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    needs: [validate-actions]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    outputs:
+      release-notes: ${{ steps.changelog.outputs.release-notes }}
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          echo "=== Generating Changelog ==="
+          
+          # Get the latest tag
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          current_tag=${GITHUB_REF#refs/tags/}
+          
+          echo "Current tag: $current_tag"
+          echo "Latest tag: $latest_tag"
+          
+          # Generate changelog content
+          if [ -n "$latest_tag" ]; then
+            echo "## Changes in $current_tag" > changelog.md
+            echo "" >> changelog.md
+            
+            # Get commits between tags
+            git log --pretty=format:"- %s (%an)" "$latest_tag..$current_tag" >> changelog.md
+          else
+            echo "## Initial Release $current_tag" > changelog.md
+            echo "" >> changelog.md
+            echo "First release of GitHub Actions for Java Spring Boot projects." >> changelog.md
+          fi
+          
+          # Set output for release notes
+          {
+            echo 'release-notes<<EOF'
+            cat changelog.md
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: Upload Changelog
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: changelog.md
+
+  # Create GitHub Release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate-actions, changelog]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: changelog.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update major version tag
+  update-major-tag:
+    name: Update Major Version Tag
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-')
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Update Major Version Tag
+        run: |
+          echo "=== Updating Major Version Tag ==="
+          
+          current_tag=${GITHUB_REF#refs/tags/}
+          echo "Current tag: $current_tag"
+          
+          # Extract major version (e.g., v1.2.3 -> v1)
+          if [[ $current_tag =~ ^v([0-9]+) ]]; then
+            major_version="v${BASH_REMATCH[1]}"
+            echo "Major version: $major_version"
+            
+            # Update or create major version tag
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            
+            git tag -fa "$major_version" -m "Update $major_version to $current_tag"
+            git push origin "$major_version" --force
+            
+            echo "✅ Updated $major_version tag to point to $current_tag"
+          else
+            echo "❌ Invalid tag format: $current_tag"
+            exit 1
+          fi
+
+  # Manual release workflow
+  manual-release:
+    name: Manual Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Calculate Next Version
+        id: version
+        run: |
+          echo "=== Calculating Next Version ==="
+          
+          # Get latest tag
+          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $latest_tag"
+          
+          # Remove 'v' prefix and split version
+          version=${latest_tag#v}
+          IFS='.' read -ra VERSION_PARTS <<< "$version"
+          major=${VERSION_PARTS[0]:-0}
+          minor=${VERSION_PARTS[1]:-0}
+          patch=${VERSION_PARTS[2]:-0}
+          
+          # Calculate new version based on release type
+          case "${{ github.event.inputs.release-type }}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+          
+          new_version="v${major}.${minor}.${patch}"
+          echo "New version: $new_version"
+          echo "new-version=$new_version" >> $GITHUB_OUTPUT
+
+      - name: Create and Push Tag
+        run: |
+          echo "=== Creating New Tag ==="
+          
+          new_version="${{ steps.version.outputs.new-version }}"
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git tag -a "$new_version" -m "Release $new_version"
+          git push origin "$new_version"
+          
+          echo "✅ Created and pushed tag: $new_version"
+
+  # Notify on failure
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [validate-actions, changelog, create-release]
+    if: failure()
+    
+    steps:
+      - name: Notify Failure
+        run: |
+          echo "=== Release Failed ==="
+          echo "One or more jobs in the release pipeline failed."
+          echo "Please check the workflow logs for details."
+          
+          # Here you could add Slack/Discord/Email notifications
+          # Example:
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"Release pipeline failed for ${{ github.repository }}"}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}

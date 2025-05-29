@@ -1,0 +1,81 @@
+version: 2
+updates:
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    assignees:
+      - "cbuelvasc"
+    reviewers:
+      - "cbuelvasc"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    
+  # Docker dependencies in action files
+  - package-ecosystem: "docker"
+    directory: "/docker-build/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+    open-pull-requests-limit: 3
+    assignees:
+      - "cbuelvasc"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # Maven dependencies in test projects
+  - package-ecosystem: "maven"
+    directory: "/test-projects/maven-sample/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 2
+    assignees:
+      - "cbuelvasc"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "maven"
+      - "test-projects"
+    ignore:
+      # Ignore major version updates for Spring Boot to maintain compatibility
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        update-types: ["version-update:semver-major"]
+
+  # Gradle dependencies in test projects  
+  - package-ecosystem: "gradle"
+    directory: "/test-projects/gradle-sample/"
+    schedule:
+      interval: "monthly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 2
+    assignees:
+      - "cbuelvasc"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "gradle"
+      - "test-projects"
+    ignore:
+      # Ignore major version updates for Spring Boot to maintain compatibility
+      - dependency-name: "org.springframework.boot"
+        update-types: ["version-update:semver-major"] 
