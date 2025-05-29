@@ -58,9 +58,9 @@ Comprehensive test suite for all repository actions.
 Configuration to keep dependencies up to date:
 
 - **GitHub Actions**: Weekly updates on Mondays
-- **Docker**: Weekly updates on Tuesdays  
-- **Maven**: Monthly updates (test projects only)
-- **Gradle**: Monthly updates (test projects only)
+- **Docker**: Weekly updates on Tuesdays
+
+> **Note**: Test projects (Maven/Gradle) are created dynamically during workflow runs and don't require dependency monitoring.
 
 ### Issue Templates
 
@@ -175,4 +175,4 @@ For workflow issues:
 ---
 
 **Author**: Carmelo Buelvas Comas  
-**Last updated**: May 2024 
+**Last updated**: May 2024
