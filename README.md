@@ -337,10 +337,6 @@ When contributing new actions or improvements:
 3. Add usage examples
 4. Test with different Java versions and build tools
 
-## 📝 License
-
-This project is licensed under the MIT License - see the individual action directories for specific licensing information.
-
 ## 👨‍💻 Author
 
 **Carmelo Buelvas Comas**
