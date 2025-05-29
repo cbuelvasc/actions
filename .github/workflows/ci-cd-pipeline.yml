@@ -1,0 +1,231 @@
+name: 'Complete CI/CD Pipeline for Spring Boot Service'
+
+on:
+  workflow_call:
+    inputs:
+      # Build Configuration
+      build-tool:
+        description: 'Build tool to use (maven or gradle)'
+        required: true
+        type: string
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      
+      # Service Configuration
+      service-name:
+        description: 'Name of the service being built'
+        required: true
+        type: string
+      working-directory:
+        description: 'Working directory for the service'
+        required: false
+        type: string
+        default: '.'
+      
+      # Test Configuration
+      spring-profiles:
+        description: 'Spring profiles to activate during testing'
+        required: false
+        type: string
+        default: 'test'
+      coverage-enabled:
+        description: 'Enable code coverage reporting'
+        required: false
+        type: boolean
+        default: true
+      coverage-threshold:
+        description: 'Minimum coverage percentage required'
+        required: false
+        type: string
+        default: '80'
+      
+      # Docker Configuration
+      docker-enabled:
+        description: 'Enable Docker build and deployment'
+        required: false
+        type: boolean
+        default: false
+      image-name:
+        description: 'Docker image name (required if docker-enabled is true)'
+        required: false
+        type: string
+      image-tag:
+        description: 'Docker image tag'
+        required: false
+        type: string
+        default: 'latest'
+      
+      # Registry Configuration
+      registry-url:
+        description: 'Docker registry URL'
+        required: false
+        type: string
+        default: 'docker.io'
+      push-enabled:
+        description: 'Enable pushing to registry'
+        required: false
+        type: boolean
+        default: false
+      
+      # Environment Configuration
+      environment:
+        description: 'Target environment (dev, staging, prod)'
+        required: false
+        type: string
+        default: 'dev'
+      
+      # Cache Configuration
+      cache-enabled:
+        description: 'Enable dependency caching'
+        required: false
+        type: boolean
+        default: true
+      
+    secrets:
+      registry-username:
+        description: 'Docker registry username'
+        required: false
+      registry-password:
+        description: 'Docker registry password'
+        required: false
+    
+    outputs:
+      # Pipeline Information
+      pipeline-status:
+        description: 'Overall pipeline status (success/failure)'
+        value: ${{ jobs.deployment.outputs.pipeline-status }}
+      build-status:
+        description: 'Build and test status'
+        value: ${{ jobs.build-test.outputs.build-status }}
+      docker-status:
+        description: 'Docker build status'
+        value: ${{ jobs.docker-build.outputs.build-status }}
+      
+      # Artifact Information
+      artifact-name:
+        description: 'Name of the built artifact'
+        value: ${{ jobs.build-test.outputs.artifact-name }}
+      artifact-version:
+        description: 'Version of the built artifact'
+        value: ${{ jobs.build-test.outputs.artifact-version }}
+      image-full-name:
+        description: 'Full Docker image name with tag'
+        value: ${{ jobs.docker-build.outputs.image-full-name }}
+
+jobs:
+  build-test:
+    name: 'Build and Test'
+    uses: ./.github/workflows/build-and-test.yml
+    with:
+      build-tool: ${{ inputs.build-tool }}
+      java-version: ${{ inputs.java-version }}
+      service-name: ${{ inputs.service-name }}
+      working-directory: ${{ inputs.working-directory }}
+      spring-profiles: ${{ inputs.spring-profiles }}
+      coverage-enabled: ${{ inputs.coverage-enabled }}
+      coverage-threshold: ${{ inputs.coverage-threshold }}
+      cache-enabled: ${{ inputs.cache-enabled }}
+  
+  docker-build:
+    name: 'Docker Build'
+    if: inputs.docker-enabled == true
+    needs: [build-test]
+    uses: ./.github/workflows/docker-build-deploy.yml
+    with:
+      build-tool: ${{ inputs.build-tool }}
+      java-version: ${{ inputs.java-version }}
+      service-name: ${{ inputs.service-name }}
+      working-directory: ${{ inputs.working-directory }}
+      image-name: ${{ inputs.image-name }}
+      image-tag: ${{ inputs.image-tag }}
+      registry-url: ${{ inputs.registry-url }}
+      push-enabled: ${{ inputs.push-enabled }}
+      cache-enabled: ${{ inputs.cache-enabled }}
+    secrets:
+      registry-username: ${{ secrets.registry-username }}
+      registry-password: ${{ secrets.registry-password }}
+  
+  deployment:
+    name: 'Deployment Summary'
+    runs-on: ubuntu-latest
+    needs: [build-test, docker-build]
+    if: always()
+    outputs:
+      pipeline-status: ${{ steps.pipeline-result.outputs.status }}
+    
+    steps:
+      - name: Evaluate Pipeline Status
+        id: pipeline-result
+        shell: bash
+        run: |
+          BUILD_STATUS="${{ needs.build-test.outputs.build-status }}"
+          DOCKER_STATUS="${{ needs.docker-build.outputs.build-status || 'skipped' }}"
+          
+          echo "Build Status: ${BUILD_STATUS}"
+          echo "Docker Status: ${DOCKER_STATUS}"
+          
+          if [ "${BUILD_STATUS}" = "success" ] && [ "${DOCKER_STATUS}" != "failure" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            PIPELINE_STATUS="✅ Success"
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            PIPELINE_STATUS="❌ Failed"
+          fi
+          
+          echo "PIPELINE_STATUS=${PIPELINE_STATUS}" >> $GITHUB_ENV
+      
+      - name: Generate Pipeline Summary
+        shell: bash
+        run: |
+          echo "# 🚀 CI/CD Pipeline Summary for ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Pipeline Status: ${PIPELINE_STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "| Stage | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build & Test** | ${{ needs.build-test.outputs.build-status == 'success' && '✅' || '❌' }} | ${{ needs.build-test.outputs.build-status }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.docker-enabled }}" = "true" ]; then
+            echo "| **Docker Build** | ${{ needs.docker-build.outputs.build-status == 'success' && '✅' || (needs.docker-build.result == 'skipped' && '➖' || '❌') }} | ${{ needs.docker-build.outputs.build-status || 'skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Docker Build** | ➖ | Disabled |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📦 Artifact Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Tool**: ${{ inputs.build-tool }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version**: ${{ inputs.java-version }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.build-test.outputs.artifact-name }}" != "" ]; then
+            echo "- **Artifact**: ${{ needs.build-test.outputs.artifact-name }}:${{ needs.build-test.outputs.artifact-version }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ inputs.docker-enabled }}" = "true" ] && [ "${{ needs.docker-build.outputs.image-full-name }}" != "" ]; then
+            echo "- **Docker Image**: ${{ needs.docker-build.outputs.image-full-name }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔗 Deployment Commands" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.docker-enabled }}" = "true" ] && [ "${{ needs.docker-build.outputs.build-status }}" = "success" ]; then
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Pull and run the Docker image" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ needs.docker-build.outputs.image-full-name }}" >> $GITHUB_STEP_SUMMARY
+            echo "docker run -p 8080:8080 ${{ needs.docker-build.outputs.image-full-name }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "# Run the application locally" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ inputs.build-tool }}" = "maven" ]; then
+              echo "mvn spring-boot:run" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "./gradlew bootRun" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi 

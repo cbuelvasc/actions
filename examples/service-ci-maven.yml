@@ -1,0 +1,100 @@
+# Ejemplo: CI para Servicio Spring Boot con Maven
+# Este archivo debe estar en tu servicio: .github/workflows/ci.yml
+
+name: Order Service CI
+
+on:
+  push:
+    branches: [main, develop, feature/*]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: myorg/order-service
+
+jobs:
+  # Job principal usando el workflow reutilizable
+  ci:
+    name: Build and Test
+    uses: cbuelvasc/actions/.github/workflows/build-and-test.yml@v1
+    with:
+      # Configuración básica
+      build-tool: 'maven'
+      service-name: 'order-service'
+      java-version: '21'
+      
+      # Configuración de testing
+      spring-profiles: 'test,h2'
+      coverage-enabled: true
+      coverage-threshold: '80'
+      
+      # Optimizaciones
+      cache-enabled: true
+      maven-args: '-T 1C --no-transfer-progress --batch-mode'
+  
+  # Job de análisis de calidad de código (opcional)
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: [ci]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for better analysis
+          fetch-depth: 0
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      
+      - name: Run SpotBugs Analysis
+        run: mvn spotbugs:check
+      
+      - name: Run PMD Analysis
+        run: mvn pmd:check
+        continue-on-error: true
+      
+      - name: Upload Analysis Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-quality-reports
+          path: |
+            target/spotbugsXml.xml
+            target/pmd.xml
+  
+  # Job de notificaciones (opcional)
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [ci, code-quality]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Notify Success
+        if: needs.ci.outputs.build-status == 'success'
+        run: |
+          echo "✅ Order Service CI passed successfully!"
+          echo "Artifact: ${{ needs.ci.outputs.artifact-name }}:${{ needs.ci.outputs.artifact-version }}"
+          echo "Coverage: ${{ needs.ci.outputs.coverage-percentage }}%"
+      
+      - name: Notify Failure
+        if: needs.ci.outputs.build-status == 'failure'
+        run: |
+          echo "❌ Order Service CI failed!"
+          exit 1 

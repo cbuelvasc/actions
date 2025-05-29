@@ -1,0 +1,201 @@
+name: 'Build and Test Spring Boot Service'
+
+on:
+  workflow_call:
+    inputs:
+      # Build Configuration
+      build-tool:
+        description: 'Build tool to use (maven or gradle)'
+        required: true
+        type: string
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      java-distribution:
+        description: 'Java distribution (temurin, corretto, microsoft, oracle)'
+        required: false
+        type: string
+        default: 'temurin'
+      
+      # Service Configuration
+      service-name:
+        description: 'Name of the service being built'
+        required: true
+        type: string
+      working-directory:
+        description: 'Working directory for the service'
+        required: false
+        type: string
+        default: '.'
+      
+      # Test Configuration
+      spring-profiles:
+        description: 'Spring profiles to activate during testing'
+        required: false
+        type: string
+        default: 'test'
+      coverage-enabled:
+        description: 'Enable code coverage reporting'
+        required: false
+        type: boolean
+        default: true
+      coverage-threshold:
+        description: 'Minimum coverage percentage required'
+        required: false
+        type: string
+        default: '80'
+      
+      # Cache Configuration
+      cache-enabled:
+        description: 'Enable dependency caching'
+        required: false
+        type: boolean
+        default: true
+      
+      # Build Arguments
+      maven-args:
+        description: 'Additional Maven arguments'
+        required: false
+        type: string
+        default: '-T 1C --no-transfer-progress'
+      gradle-args:
+        description: 'Additional Gradle arguments'
+        required: false
+        type: string
+        default: '--no-daemon --parallel'
+    
+    outputs:
+      # Build Information
+      build-status:
+        description: 'Build status (success/failure)'
+        value: ${{ jobs.build-test.outputs.build-status }}
+      test-status:
+        description: 'Test status (success/failure)'
+        value: ${{ jobs.build-test.outputs.test-status }}
+      coverage-percentage:
+        description: 'Code coverage percentage achieved'
+        value: ${{ jobs.build-test.outputs.coverage-percentage }}
+      
+      # Artifact Information
+      artifact-name:
+        description: 'Name of the built artifact'
+        value: ${{ jobs.build-test.outputs.artifact-name }}
+      artifact-version:
+        description: 'Version of the built artifact'
+        value: ${{ jobs.build-test.outputs.artifact-version }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    outputs:
+      build-status: ${{ steps.build-result.outputs.status }}
+      test-status: ${{ steps.test-result.outputs.status }}
+      coverage-percentage: ${{ steps.test-suite.outputs.coverage-percentage }}
+      artifact-name: ${{ steps.build-info.outputs.artifact-name }}
+      artifact-version: ${{ steps.build-info.outputs.version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Java Maven Environment
+        if: inputs.build-tool == 'maven'
+        id: java-maven-setup
+        uses: ./setup-java-maven-env
+        with:
+          java-version: ${{ inputs.java-version }}
+          java-distribution: ${{ inputs.java-distribution }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+          maven-args: ${{ inputs.maven-args }}
+      
+      - name: Setup Java Gradle Environment
+        if: inputs.build-tool == 'gradle'
+        id: java-gradle-setup
+        uses: ./setup-java-gradle-env
+        with:
+          java-version: ${{ inputs.java-version }}
+          java-distribution: ${{ inputs.java-distribution }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+          gradle-args: ${{ inputs.gradle-args }}
+      
+      - name: Run Spring Boot Test Suite
+        id: test-suite
+        uses: ./spring-boot-test-suite
+        with:
+          build-tool: ${{ inputs.build-tool }}
+          java-version: ${{ inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+          spring-profiles: ${{ inputs.spring-profiles }}
+          coverage-enabled: ${{ inputs.coverage-enabled }}
+          coverage-threshold: ${{ inputs.coverage-threshold }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+      
+      - name: Extract Build Information
+        id: build-info
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          if [ "${{ inputs.build-tool }}" = "maven" ]; then
+            # Extract from Maven POM
+            ARTIFACT_NAME=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
+            VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          else
+            # Extract from Gradle build
+            ARTIFACT_NAME=$(./gradlew properties -q | grep "^name:" | awk '{print $2}')
+            VERSION=$(./gradlew properties -q | grep "^version:" | awk '{print $2}')
+          fi
+          
+          echo "artifact-name=${ARTIFACT_NAME}" >> $GITHUB_OUTPUT
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+      
+      - name: Set Build Result
+        id: build-result
+        if: always()
+        shell: bash
+        run: |
+          SETUP_STATUS="success"
+          if [ "${{ inputs.build-tool }}" = "maven" ]; then
+            SETUP_STATUS="${{ steps.java-maven-setup.outcome }}"
+          else
+            SETUP_STATUS="${{ steps.java-gradle-setup.outcome }}"
+          fi
+          
+          if [ "${SETUP_STATUS}" = "success" ] && [ "${{ steps.test-suite.outcome }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Set Test Result
+        id: test-result
+        if: always()
+        shell: bash
+        run: |
+          echo "status=${{ steps.test-suite.outcome }}" >> $GITHUB_OUTPUT
+      
+      - name: Generate Job Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🏗️ Build and Test Summary for ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Tool** | ✅ | ${{ inputs.build-tool }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Java Version** | ✅ | ${{ inputs.java-version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Status** | ${{ steps.build-result.outputs.status == 'success' && '✅' || '❌' }} | ${{ steps.build-result.outputs.status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Test Status** | ${{ steps.test-result.outputs.status == 'success' && '✅' || '❌' }} | ${{ steps.test-result.outputs.status }} |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.coverage-enabled }}" = "true" ]; then
+            echo "| **Coverage** | ⚠️ | ${{ steps.test-suite.outputs.coverage-percentage }}% |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Artifact Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Name**: ${{ steps.build-info.outputs.artifact-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ steps.build-info.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY 

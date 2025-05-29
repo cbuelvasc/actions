@@ -15,6 +15,51 @@ A collection of reusable GitHub Actions designed to streamline CI/CD workflows f
 | [spring-boot-test-suite](./spring-boot-test-suite/) | Comprehensive testing with coverage and reporting | Maven/Gradle | Complete testing pipeline |
 | [docker-build](./docker-build/) | Builds and optionally pushes Docker images | Maven/Gradle | Docker image creation and deployment |
 
+## 🔄 Available Reusable Workflows
+
+| Workflow | Description | Use Case |
+|----------|-------------|----------|
+| [build-and-test.yml](.github/workflows/build-and-test.yml) | Complete build and testing pipeline | CI for Spring Boot services |
+| [docker-build-deploy.yml](.github/workflows/docker-build-deploy.yml) | Docker build and registry deployment | Container deployment |
+| [ci-cd-pipeline.yml](.github/workflows/ci-cd-pipeline.yml) | End-to-end CI/CD automation | Complete service lifecycle |
+
+### Quick Workflow Usage
+
+#### Simple CI Pipeline
+```yaml
+name: My Service CI
+on: [push, pull_request]
+jobs:
+  ci:
+    uses: cbuelvasc/actions/.github/workflows/build-and-test.yml@v1
+    with:
+      build-tool: 'maven'
+      service-name: 'my-service'
+      coverage-threshold: '80'
+```
+
+#### Complete CI/CD Pipeline
+```yaml
+name: My Service CI/CD
+on: 
+  push:
+    branches: [main]
+jobs:
+  pipeline:
+    uses: cbuelvasc/actions/.github/workflows/ci-cd-pipeline.yml@v1
+    with:
+      build-tool: 'gradle'
+      service-name: 'my-service'
+      docker-enabled: true
+      image-name: 'my-org/my-service'
+      push-enabled: true
+    secrets:
+      registry-username: ${{ secrets.DOCKER_USERNAME }}
+      registry-password: ${{ secrets.DOCKER_PASSWORD }}
+```
+
+> **📚 Detailed Documentation**: [Reusable Workflows Guide](.github/REUSABLE_WORKFLOWS.md)
+
 ## 📋 Quick Start
 
 ### Action Usage

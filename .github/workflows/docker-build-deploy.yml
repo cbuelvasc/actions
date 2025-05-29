@@ -1,0 +1,167 @@
+name: 'Docker Build and Deploy Spring Boot Service'
+
+on:
+  workflow_call:
+    inputs:
+      # Build Configuration
+      build-tool:
+        description: 'Build tool to use (maven or gradle)'
+        required: true
+        type: string
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '21'
+      
+      # Service Configuration
+      service-name:
+        description: 'Name of the service being built'
+        required: true
+        type: string
+      working-directory:
+        description: 'Working directory for the service'
+        required: false
+        type: string
+        default: '.'
+      
+      # Docker Configuration
+      image-name:
+        description: 'Docker image name'
+        required: true
+        type: string
+      image-tag:
+        description: 'Docker image tag'
+        required: false
+        type: string
+        default: 'latest'
+      dockerfile-path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: 'Dockerfile'
+      
+      # Registry Configuration
+      registry-url:
+        description: 'Docker registry URL'
+        required: false
+        type: string
+        default: 'docker.io'
+      push-enabled:
+        description: 'Enable pushing to registry'
+        required: false
+        type: boolean
+        default: false
+      
+      # Cache Configuration
+      cache-enabled:
+        description: 'Enable dependency caching'
+        required: false
+        type: boolean
+        default: true
+      
+    secrets:
+      registry-username:
+        description: 'Docker registry username'
+        required: false
+      registry-password:
+        description: 'Docker registry password'
+        required: false
+    
+    outputs:
+      # Build Information
+      build-status:
+        description: 'Build status (success/failure)'
+        value: ${{ jobs.docker-build.outputs.build-status }}
+      image-full-name:
+        description: 'Full Docker image name with tag'
+        value: ${{ jobs.docker-build.outputs.image-full-name }}
+      image-digest:
+        description: 'Docker image digest'
+        value: ${{ jobs.docker-build.outputs.image-digest }}
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    outputs:
+      build-status: ${{ steps.build-result.outputs.status }}
+      image-full-name: ${{ steps.docker-build.outputs.image-full-name }}
+      image-digest: ${{ steps.docker-build.outputs.digest }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Java Maven Environment
+        if: inputs.build-tool == 'maven'
+        id: java-maven-setup
+        uses: ./setup-java-maven-env
+        with:
+          java-version: ${{ inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+      
+      - name: Setup Java Gradle Environment
+        if: inputs.build-tool == 'gradle'
+        id: java-gradle-setup
+        uses: ./setup-java-gradle-env
+        with:
+          java-version: ${{ inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+      
+      - name: Build Docker Image
+        id: docker-build
+        uses: ./docker-build
+        with:
+          build-tool: ${{ inputs.build-tool }}
+          working-directory: ${{ inputs.working-directory }}
+          image-name: ${{ inputs.image-name }}
+          image-tag: ${{ inputs.image-tag }}
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+          registry-url: ${{ inputs.registry-url }}
+          push: ${{ inputs.push-enabled }}
+          registry-username: ${{ secrets.registry-username }}
+          registry-password: ${{ secrets.registry-password }}
+          cache-enabled: ${{ inputs.cache-enabled }}
+      
+      - name: Set Build Result
+        id: build-result
+        if: always()
+        shell: bash
+        run: |
+          SETUP_STATUS="success"
+          if [ "${{ inputs.build-tool }}" = "maven" ]; then
+            SETUP_STATUS="${{ steps.java-maven-setup.outcome }}"
+          else
+            SETUP_STATUS="${{ steps.java-gradle-setup.outcome }}"
+          fi
+          
+          if [ "${SETUP_STATUS}" = "success" ] && [ "${{ steps.docker-build.outcome }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Generate Job Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🐳 Docker Build Summary for ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Tool** | ✅ | ${{ inputs.build-tool }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Java Version** | ✅ | ${{ inputs.java-version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Docker Build** | ${{ steps.docker-build.outcome == 'success' && '✅' || '❌' }} | ${{ steps.docker-build.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Registry Push** | ${{ inputs.push-enabled && '✅' || '➖' }} | ${{ inputs.push-enabled && 'Enabled' || 'Disabled' }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Image Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image Name**: ${{ inputs.image-name }}:${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry**: ${{ inputs.registry-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service**: ${{ inputs.service-name }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.docker-build.outputs.digest }}" != "" ]; then
+            echo "- **Digest**: \`${{ steps.docker-build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+          fi 

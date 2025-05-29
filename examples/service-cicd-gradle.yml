@@ -1,0 +1,248 @@
+# Ejemplo: CI/CD Completo para Servicio Spring Boot con Gradle
+# Este archivo debe estar en tu servicio: .github/workflows/cicd.yml
+
+name: Payment Service CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+      force_deploy:
+        description: 'Force deployment even on feature branch'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/payment-service
+
+jobs:
+  # Pipeline completo usando workflow reutilizable
+  pipeline:
+    name: Complete CI/CD Pipeline
+    uses: cbuelvasc/actions/.github/workflows/ci-cd-pipeline.yml@v1
+    with:
+      # Configuración de build
+      build-tool: 'gradle'
+      service-name: 'payment-service'
+      java-version: '21'
+      working-directory: '.'
+      
+      # Configuración de testing
+      spring-profiles: 'test,testcontainers'
+      coverage-enabled: true
+      coverage-threshold: ${{ github.ref == 'refs/heads/main' && '85' || '75' }}
+      
+      # Configuración Docker
+      docker-enabled: ${{ github.event_name != 'pull_request' || inputs.force_deploy == true }}
+      image-name: ${{ env.IMAGE_NAME }}
+      image-tag: ${{ github.ref_type == 'tag' && github.ref_name || (github.ref_name == 'main' && 'latest' || github.ref_name) }}
+      registry-url: ${{ env.REGISTRY }}
+      
+      # Configuración de deployment
+      push-enabled: ${{ github.event_name == 'push' || inputs.force_deploy == true }}
+      environment: ${{ inputs.environment || (startsWith(github.ref, 'refs/tags/') && 'prod' || (github.ref_name == 'main' && 'staging' || 'dev')) }}
+      
+      # Optimizaciones
+      cache-enabled: true
+      gradle-args: '--no-daemon --parallel --build-cache --configuration-cache'
+    
+    secrets:
+      registry-username: ${{ github.actor }}
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+  
+  # Job de testing de integración adicional
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [pipeline]
+    if: needs.pipeline.outputs.build-status == 'success' && github.event_name != 'pull_request'
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: paymentdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          cache-read-only: false
+      
+      - name: Run Integration Tests
+        env:
+          SPRING_PROFILES_ACTIVE: integration
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/paymentdb
+          SPRING_DATASOURCE_USERNAME: testuser
+          SPRING_DATASOURCE_PASSWORD: testpass
+          SPRING_REDIS_HOST: localhost
+          SPRING_REDIS_PORT: 6379
+        run: ./gradlew integrationTest --info
+      
+      - name: Upload Integration Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: |
+            build/reports/tests/integrationTest/
+            build/test-results/integrationTest/
+  
+  # Job de deployment a entorno específico
+  deploy:
+    name: Deploy to Environment
+    runs-on: ubuntu-latest
+    needs: [pipeline, integration-tests]
+    if: always() && needs.pipeline.outputs.pipeline-status == 'success' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || inputs.force_deploy == true)
+    environment:
+      name: ${{ needs.pipeline.outputs.environment || 'dev' }}
+      url: ${{ steps.deploy.outputs.service-url }}
+    
+    steps:
+      - name: Deploy Service
+        id: deploy
+        run: |
+          ENVIRONMENT="${{ inputs.environment || 'dev' }}"
+          IMAGE="${{ needs.pipeline.outputs.image-full-name }}"
+          
+          echo "🚀 Deploying Payment Service to ${ENVIRONMENT}"
+          echo "📦 Image: ${IMAGE}"
+          
+          # Simular deployment (reemplazar con tu lógica real)
+          case "${ENVIRONMENT}" in
+            "dev")
+              SERVICE_URL="https://payment-dev.example.com"
+              ;;
+            "staging")
+              SERVICE_URL="https://payment-staging.example.com"
+              ;;
+            "prod")
+              SERVICE_URL="https://payment.example.com"
+              ;;
+            *)
+              SERVICE_URL="https://payment-${ENVIRONMENT}.example.com"
+              ;;
+          esac
+          
+          echo "service-url=${SERVICE_URL}" >> $GITHUB_OUTPUT
+          
+          # Aquí irían los comandos reales de deployment
+          # Ejemplo con kubectl:
+          # kubectl set image deployment/payment-service payment-service=${IMAGE}
+          # kubectl rollout status deployment/payment-service
+          
+          echo "✅ Deployment completed successfully"
+          echo "🌐 Service URL: ${SERVICE_URL}"
+  
+  # Job de testing post-deployment
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: needs.deploy.result == 'success'
+    
+    steps:
+      - name: Health Check
+        run: |
+          SERVICE_URL="${{ needs.deploy.outputs.service-url }}"
+          echo "🔍 Running health check against: ${SERVICE_URL}"
+          
+          # Simular health check (reemplazar con checks reales)
+          echo "✅ Health check passed"
+          
+          # Ejemplo real:
+          # curl -f "${SERVICE_URL}/actuator/health" || exit 1
+      
+      - name: Basic Functionality Test
+        run: |
+          echo "🧪 Running basic functionality tests"
+          # Aquí irían tests básicos de la API
+          echo "✅ Basic functionality tests passed"
+  
+  # Job de notificación y cleanup
+  notify:
+    name: Notify and Cleanup
+    runs-on: ubuntu-latest
+    needs: [pipeline, integration-tests, deploy, smoke-tests]
+    if: always()
+    
+    steps:
+      - name: Generate Deployment Summary
+        run: |
+          echo "# 🚀 Payment Service Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Pipeline status
+          PIPELINE_STATUS="${{ needs.pipeline.outputs.pipeline-status }}"
+          if [ "${PIPELINE_STATUS}" = "success" ]; then
+            echo "## ✅ Pipeline Status: Success" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Pipeline Status: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build & Test** | ${{ needs.pipeline.outputs.build-status == 'success' && '✅' || '❌' }} | ${{ needs.pipeline.outputs.build-status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Docker Build** | ${{ needs.pipeline.outputs.docker-status == 'success' && '✅' || '❌' }} | ${{ needs.pipeline.outputs.docker-status }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Integration Tests** | ${{ needs.integration-tests.result == 'success' && '✅' || (needs.integration-tests.result == 'skipped' && '➖' || '❌') }} | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Deployment** | ${{ needs.deploy.result == 'success' && '✅' || (needs.deploy.result == 'skipped' && '➖' || '❌') }} | ${{ needs.deploy.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Smoke Tests** | ${{ needs.smoke-tests.result == 'success' && '✅' || (needs.smoke-tests.result == 'skipped' && '➖' || '❌') }} | ${{ needs.smoke-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          
+          # Deployment info
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 🌐 Deployment Information" >> $GITHUB_STEP_SUMMARY
+            echo "- **Environment**: ${{ needs.pipeline.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Service URL**: ${{ needs.deploy.outputs.service-url }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image**: ${{ needs.pipeline.outputs.image-full-name }}" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Cleanup Artifacts
+        if: always()
+        run: |
+          echo "🧹 Cleaning up temporary artifacts and resources"
+          # Aquí se pueden agregar comandos de cleanup si es necesario 
