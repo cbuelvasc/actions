@@ -303,11 +303,41 @@ runs:
         
         if [[ "${{ inputs.build-tool }}" == "maven" ]]; then
           if [[ -f "target/site/jacoco/jacoco.xml" ]]; then
-            COVERAGE_PERCENTAGE=$(awk -F'[%"]' '/instruction.*missed/{missed=$3} /instruction.*covered/{covered=$3} END{if(missed+covered>0) print int(covered*100/(missed+covered)); else print 0}' target/site/jacoco/jacoco.xml)
+            echo "📍 Found Maven JaCoCo report: target/site/jacoco/jacoco.xml"
+            # Parse Maven JaCoCo XML for total project coverage
+            MISSED=$(grep -o 'type="INSTRUCTION"[^>]*missed="[0-9]*"' target/site/jacoco/jacoco.xml | tail -1 | grep -o 'missed="[0-9]*"' | cut -d'"' -f2)
+            COVERED=$(grep -o 'type="INSTRUCTION"[^>]*covered="[0-9]*"' target/site/jacoco/jacoco.xml | tail -1 | grep -o 'covered="[0-9]*"' | cut -d'"' -f2)
+            
+            if [[ -n "$MISSED" && -n "$COVERED" ]]; then
+              TOTAL=$((MISSED + COVERED))
+              if [[ $TOTAL -gt 0 ]]; then
+                COVERAGE_PERCENTAGE=$((COVERED * 100 / TOTAL))
+              fi
+              echo "📊 Maven Coverage: ${COVERED} covered, ${MISSED} missed, Total: ${TOTAL}"
+            else
+              echo "⚠️ Could not parse coverage from Maven report"
+            fi
+          else
+            echo "⚠️ Maven JaCoCo report not found: target/site/jacoco/jacoco.xml"
           fi
         else
           if [[ -f "build/reports/jacoco/test/jacocoTestReport.xml" ]]; then
-            COVERAGE_PERCENTAGE=$(awk -F'[%"]' '/instruction.*missed/{missed=$3} /instruction.*covered/{covered=$3} END{if(missed+covered>0) print int(covered*100/(missed+covered)); else print 0}' build/reports/jacoco/test/jacocoTestReport.xml)
+            echo "📍 Found Gradle JaCoCo report: build/reports/jacoco/test/jacocoTestReport.xml"
+            # Parse Gradle JaCoCo XML for total project coverage (last counter in report)
+            MISSED=$(grep -o 'type="INSTRUCTION"[^>]*missed="[0-9]*"' build/reports/jacoco/test/jacocoTestReport.xml | tail -1 | grep -o 'missed="[0-9]*"' | cut -d'"' -f2)
+            COVERED=$(grep -o 'type="INSTRUCTION"[^>]*covered="[0-9]*"' build/reports/jacoco/test/jacocoTestReport.xml | tail -1 | grep -o 'covered="[0-9]*"' | cut -d'"' -f2)
+            
+            if [[ -n "$MISSED" && -n "$COVERED" ]]; then
+              TOTAL=$((MISSED + COVERED))
+              if [[ $TOTAL -gt 0 ]]; then
+                COVERAGE_PERCENTAGE=$((COVERED * 100 / TOTAL))
+              fi
+              echo "📊 Gradle Coverage: ${COVERED} covered, ${MISSED} missed, Total: ${TOTAL}"
+            else
+              echo "⚠️ Could not parse coverage from Gradle report"
+            fi
+          else
+            echo "⚠️ Gradle JaCoCo report not found: build/reports/jacoco/test/jacocoTestReport.xml"
           fi
         fi
         
