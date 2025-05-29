@@ -1,0 +1,490 @@
+name: 'Docker Build for Java Spring Boot'
+description: 'Builds and optionally pushes Docker images for Java Spring Boot applications with Maven or Gradle support'
+author: 'Carmelo Buelvas Comas'
+
+inputs:
+  # Standard inputs (ordered alphabetically)
+  build-args:
+    description: 'Docker build arguments in multiline format (ARG=value format)'
+    required: false
+    default: ''
+    
+  build-tool:
+    description: 'Build tool to use (maven or gradle)'
+    required: true
+    
+  cache-from:
+    description: 'External cache sources (type=gha, type=registry, type=local)'
+    required: false
+    default: 'type=gha'
+    
+  cache-strategy:
+    description: 'Cache strategy (docker-cache, build-cache, all, none)'
+    required: false
+    default: 'all'
+    
+  cache-to:
+    description: 'External cache export destination (type=gha, type=registry, type=local)'
+    required: false
+    default: 'type=gha,mode=max'
+    
+  context:
+    description: 'Build context path relative to working directory'
+    required: false
+    default: '.'
+    
+  dockerfile:
+    description: 'Dockerfile path relative to working directory'
+    required: false
+    default: 'Dockerfile'
+    
+  image-name:
+    description: 'Docker image name (without registry prefix or tag)'
+    required: true
+    
+  image-tag:
+    description: 'Docker image tag (e.g., latest, v1.0.0, dev)'
+    required: false
+    default: 'latest'
+    
+  java-distribution:
+    description: 'Java distribution (temurin, corretto, microsoft, oracle)'
+    required: false
+    default: 'temurin'
+    
+  java-version:
+    description: 'Java version to use (8, 11, 17, 21, etc.)'
+    required: false
+    default: '21'
+    
+  platforms:
+    description: 'Target platforms for build (comma-separated: linux/amd64,linux/arm64)'
+    required: false
+    default: 'linux/amd64'
+    
+  push:
+    description: 'Push image to registry (true or false)'
+    required: false
+    default: 'false'
+    
+  registry-password:
+    description: 'Docker registry password or token'
+    required: false
+    default: ''
+    
+  registry-url:
+    description: 'Docker registry URL (docker.io, ghcr.io, etc.)'
+    required: false
+    default: 'docker.io'
+    
+  registry-username:
+    description: 'Docker registry username'
+    required: false
+    default: ''
+    
+  spring-profiles:
+    description: 'Spring profiles to activate during build (comma-separated)'
+    required: false
+    default: 'prod'
+    
+  working-directory:
+    description: 'Working directory for the project'
+    required: false
+    default: '.'
+
+outputs:
+  # Primary outputs
+  cache-hit:
+    description: 'Indicates if Docker cache was found'
+    value: ${{ steps.docker-cache.outputs.cache-hit }}
+    
+  image-digest:
+    description: 'Image digest SHA256 hash'
+    value: ${{ steps.build.outputs.digest }}
+    
+  image-id:
+    description: 'Built image ID'
+    value: ${{ steps.build.outputs.imageid }}
+    
+  image-metadata:
+    description: 'Build result metadata JSON'
+    value: ${{ steps.build.outputs.metadata }}
+    
+  # Secondary outputs
+  build-tool:
+    description: 'Build tool used (maven or gradle)'
+    value: ${{ inputs.build-tool }}
+    
+  image-full-name:
+    description: 'Full image name with registry and tag'
+    value: ${{ steps.image-info.outputs.full-name }}
+    
+  java-version:
+    description: 'Java version used in build'
+    value: ${{ steps.java-setup.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    # 1. Input validation
+    - name: Validate inputs
+      shell: bash
+      run: |
+        echo "=== Validating Action Inputs ==="
+        
+        # Set common variables for validation
+        BUILD_TOOL="${{ inputs.build-tool }}"
+        IMAGE_NAME="${{ inputs.image-name }}"
+        JAVA_VERSION="${{ inputs.java-version }}"
+        PUSH_ENABLED="${{ inputs.push }}"
+        REGISTRY_USERNAME="${{ inputs.registry-username }}"
+        REGISTRY_PASSWORD="${{ inputs.registry-password }}"
+        DOCKERFILE_PATH="${{ inputs.working-directory }}/${{ inputs.dockerfile }}"
+        CACHE_STRATEGY="${{ inputs.cache-strategy }}"
+        
+        # Validate build tool
+        if [[ "$BUILD_TOOL" != "maven" && "$BUILD_TOOL" != "gradle" ]]; then
+          echo "❌ Error: build-tool must be either 'maven' or 'gradle'"
+          echo "   Provided: '$BUILD_TOOL'"
+          echo "   Valid values: maven, gradle"
+          exit 1
+        fi
+        echo "✅ Build tool: $BUILD_TOOL"
+        
+        # Validate image name
+        if [[ -z "$IMAGE_NAME" ]]; then
+          echo "❌ Error: image-name is required"
+          exit 1
+        fi
+        # Validate image name format (basic validation)
+        if [[ ! "$IMAGE_NAME" =~ ^[a-z0-9]([a-z0-9._-]*[a-z0-9])?(/[a-z0-9]([a-z0-9._-]*[a-z0-9])?)*$ ]]; then
+          echo "❌ Error: image-name contains invalid characters"
+          echo "   Provided: '$IMAGE_NAME'"
+          echo "   Must be lowercase alphanumeric with hyphens, underscores, dots, and forward slashes"
+          exit 1
+        fi
+        echo "✅ Image name: $IMAGE_NAME"
+        
+        # Validate Java version
+        if ! [[ "$JAVA_VERSION" =~ ^[0-9]+$ ]] || [[ "$JAVA_VERSION" -lt 8 ]]; then
+          echo "❌ Error: java-version must be a valid Java version (8 or higher)"
+          echo "   Provided: '$JAVA_VERSION'"
+          echo "   Valid values: 8, 11, 17, 21, etc."
+          exit 1
+        fi
+        echo "✅ Java version: $JAVA_VERSION"
+        
+        # Validate cache strategy
+        if [[ "$CACHE_STRATEGY" != "docker-cache" && "$CACHE_STRATEGY" != "build-cache" && "$CACHE_STRATEGY" != "all" && "$CACHE_STRATEGY" != "none" ]]; then
+          echo "❌ Error: cache-strategy must be one of: docker-cache, build-cache, all, none"
+          echo "   Provided: '$CACHE_STRATEGY'"
+          exit 1
+        fi
+        echo "✅ Cache strategy: $CACHE_STRATEGY"
+        
+        # Validate push and registry credentials
+        if [[ "$PUSH_ENABLED" == "true" ]]; then
+          if [[ -z "$REGISTRY_USERNAME" || -z "$REGISTRY_PASSWORD" ]]; then
+            echo "❌ Error: registry-username and registry-password are required when push=true"
+            echo "   Registry username provided: $([ -n "$REGISTRY_USERNAME" ] && echo "yes" || echo "no")"
+            echo "   Registry password provided: $([ -n "$REGISTRY_PASSWORD" ] && echo "yes" || echo "no")"
+            exit 1
+          fi
+          echo "✅ Registry credentials provided for push"
+        fi
+        
+        # Validate Dockerfile exists
+        if [[ ! -f "$DOCKERFILE_PATH" ]]; then
+          echo "❌ Error: Dockerfile not found at $DOCKERFILE_PATH"
+          echo "   Working directory: ${{ inputs.working-directory }}"
+          echo "   Dockerfile: ${{ inputs.dockerfile }}"
+          exit 1
+        fi
+        echo "✅ Dockerfile found: ${{ inputs.dockerfile }}"
+        
+        echo "=== Input validation completed ==="
+
+    # 2. Setup Java environment
+    - name: Setup Java
+      id: java-setup
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+        cache: ${{ inputs.build-tool }}
+
+    # 3. Cache management for Docker layers
+    - name: Cache Docker layers
+      id: docker-cache
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'docker-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          /tmp/.buildx-cache
+          ~/.docker/buildx
+        key: docker-cache-${{ inputs.build-tool }}-${{ runner.os }}-${{ hashFiles(format('{0}/{1}', inputs.working-directory, inputs.dockerfile)) }}-${{ github.sha }}
+        restore-keys: |
+          docker-cache-${{ inputs.build-tool }}-${{ runner.os }}-${{ hashFiles(format('{0}/{1}', inputs.working-directory, inputs.dockerfile)) }}-
+          docker-cache-${{ inputs.build-tool }}-${{ runner.os }}-
+
+    # 4. Cache management for build artifacts
+    - name: Cache build artifacts
+      if: inputs.cache-strategy == 'all' || inputs.cache-strategy == 'build-cache'
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ inputs.working-directory }}/target
+          ${{ inputs.working-directory }}/build
+        key: build-cache-${{ inputs.build-tool }}-${{ runner.os }}-${{ hashFiles(format('{0}/pom.xml', inputs.working-directory), format('{0}/build.gradle', inputs.working-directory), format('{0}/build.gradle.kts', inputs.working-directory)) }}-${{ github.sha }}
+        restore-keys: |
+          build-cache-${{ inputs.build-tool }}-${{ runner.os }}-${{ hashFiles(format('{0}/pom.xml', inputs.working-directory), format('{0}/build.gradle', inputs.working-directory), format('{0}/build.gradle.kts', inputs.working-directory)) }}-
+          build-cache-${{ inputs.build-tool }}-${{ runner.os }}-
+
+    # 5. Configure build environment
+    - name: Configure build environment
+      shell: bash
+      run: |
+        echo "=== Configuring Build Environment ==="
+        
+        # Set environment variables
+        SPRING_PROFILES="${{ inputs.spring-profiles }}"
+        WORKING_DIR="${{ inputs.working-directory }}"
+        
+        echo "SPRING_PROFILES_ACTIVE=$SPRING_PROFILES" >> $GITHUB_ENV
+        echo "BUILD_WORKING_DIR=$WORKING_DIR" >> $GITHUB_ENV
+        
+        # Configure build tool specific environment
+        if [[ "${{ inputs.build-tool }}" == "maven" ]]; then
+          echo "MAVEN_OPTS=-Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200" >> $GITHUB_ENV
+          echo "✅ Maven environment configured"
+        else
+          echo "GRADLE_OPTS=-Xmx2g -XX:+UseG1GC -XX:MaxGCPauseMillis=200" >> $GITHUB_ENV
+          echo "✅ Gradle environment configured"
+        fi
+        
+        echo "✅ Spring profiles: $SPRING_PROFILES"
+        echo "✅ Working directory: $WORKING_DIR"
+
+    # 6. Build application
+    - name: Build Maven application
+      if: inputs.build-tool == 'maven'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Building Maven Application ==="
+        
+        # Set variables for better readability
+        SPRING_PROFILES="${{ inputs.spring-profiles }}"
+        
+        # Make mvnw executable if it exists
+        if [ -f "./mvnw" ]; then
+          echo "🔧 Using Maven wrapper (mvnw)"
+          chmod +x ./mvnw
+          ./mvnw clean package -DskipTests -Dspring.profiles.active="$SPRING_PROFILES" -B
+        else
+          echo "🔧 Using system Maven (mvn)"
+          mvn clean package -DskipTests -Dspring.profiles.active="$SPRING_PROFILES" -B
+        fi
+        
+        # Verify JAR was created
+        if ls target/*.jar 1> /dev/null 2>&1; then
+          echo "✅ Maven build completed successfully"
+          echo "📦 JAR files created:"
+          ls -la target/*.jar
+        else
+          echo "❌ Error: No JAR files found in target directory"
+          exit 1
+        fi
+
+    - name: Build Gradle application
+      if: inputs.build-tool == 'gradle'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "=== Building Gradle Application ==="
+        
+        # Set variables for better readability
+        SPRING_PROFILES="${{ inputs.spring-profiles }}"
+        
+        # Make gradlew executable if it exists
+        if [ -f "./gradlew" ]; then
+          echo "🔧 Using Gradle wrapper (gradlew)"
+          chmod +x ./gradlew
+          ./gradlew clean build -x test -Dspring.profiles.active="$SPRING_PROFILES" --no-daemon
+        else
+          echo "🔧 Using system Gradle (gradle)"
+          gradle clean build -x test -Dspring.profiles.active="$SPRING_PROFILES" --no-daemon
+        fi
+        
+        # Verify JAR was created
+        if ls build/libs/*.jar 1> /dev/null 2>&1; then
+          echo "✅ Gradle build completed successfully"
+          echo "📦 JAR files created:"
+          ls -la build/libs/*.jar
+        else
+          echo "❌ Error: No JAR files found in build/libs directory"
+          exit 1
+        fi
+
+    # 7. Setup Docker Buildx
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # 8. Login to Docker registry
+    - name: Log in to Docker registry
+      if: inputs.push == 'true'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry-url }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    # 9. Generate image metadata
+    - name: Generate image metadata
+      id: image-info
+      shell: bash
+      run: |
+        echo "=== Generating Image Metadata ==="
+        
+        # Set variables for better readability
+        REGISTRY_URL="${{ inputs.registry-url }}"
+        IMAGE_NAME="${{ inputs.image-name }}"
+        IMAGE_TAG="${{ inputs.image-tag }}"
+        BUILD_ARGS="${{ inputs.build-args }}"
+        JAVA_VERSION="${{ inputs.java-version }}"
+        BUILD_TOOL="${{ inputs.build-tool }}"
+        SPRING_PROFILES="${{ inputs.spring-profiles }}"
+        
+        # Generate full image name based on registry
+        if [[ "$REGISTRY_URL" == "docker.io" ]]; then
+          FULL_NAME="$IMAGE_NAME:$IMAGE_TAG"
+        else
+          FULL_NAME="$REGISTRY_URL/$IMAGE_NAME:$IMAGE_TAG"
+        fi
+        
+        echo "full-name=$FULL_NAME" >> $GITHUB_OUTPUT
+        echo "📦 Full image name: $FULL_NAME"
+        
+        # Generate build args (preserve user build args and add common ones)
+        COMBINED_BUILD_ARGS="$BUILD_ARGS"
+        if [[ -n "$BUILD_ARGS" ]]; then
+          COMBINED_BUILD_ARGS="$BUILD_ARGS"$'\n'
+        fi
+        
+        # Add standard build args
+        COMBINED_BUILD_ARGS="${COMBINED_BUILD_ARGS}JAVA_VERSION=$JAVA_VERSION"$'\n'
+        COMBINED_BUILD_ARGS="${COMBINED_BUILD_ARGS}BUILD_TOOL=$BUILD_TOOL"$'\n'
+        COMBINED_BUILD_ARGS="${COMBINED_BUILD_ARGS}SPRING_PROFILES_ACTIVE=$SPRING_PROFILES"
+        
+        # Set multiline output for build args
+        {
+          echo "build-args<<EOF"
+          echo "$COMBINED_BUILD_ARGS"
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+        
+        echo "🏗️ Build arguments configured"
+
+    # 10. Extract metadata for labels and tags
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ steps.image-info.outputs.full-name }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=${{ inputs.image-tag }}
+
+    # 11. Build and push Docker image
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.working-directory }}/${{ inputs.context }}
+        file: ${{ inputs.working-directory }}/${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        build-args: ${{ steps.image-info.outputs.build-args }}
+        cache-from: ${{ inputs.cache-from }}
+        cache-to: ${{ inputs.cache-to }}
+
+    # 12. Generate summary and outputs
+    - name: Generate build summary
+      shell: bash
+      run: |
+        echo "=== Docker Build Summary ==="
+        
+        # Set variables for output
+        BUILD_TOOL="${{ inputs.build-tool }}"
+        JAVA_VERSION="${{ steps.java-setup.outputs.version }}"
+        IMAGE_NAME="${{ steps.image-info.outputs.full-name }}"
+        PLATFORMS="${{ inputs.platforms }}"
+        PUSH_ENABLED="${{ inputs.push }}"
+        IMAGE_ID="${{ steps.build.outputs.imageid }}"
+        IMAGE_DIGEST="${{ steps.build.outputs.digest }}"
+        CACHE_HIT="${{ steps.docker-cache.outputs.cache-hit }}"
+        
+        echo "🏗️  Build tool: $BUILD_TOOL"
+        echo "☕ Java version: $JAVA_VERSION"
+        echo "🐳 Image: $IMAGE_NAME"
+        echo "🏷️  Platforms: $PLATFORMS"
+        echo "🚀 Push enabled: $PUSH_ENABLED"
+        echo "📦 Cache hit: $CACHE_HIT"
+        
+        if [[ "$PUSH_ENABLED" == "true" ]]; then
+          echo "✅ Image successfully built and pushed"
+          echo "🔗 Image ID: $IMAGE_ID"
+          echo "🔗 Digest: $IMAGE_DIGEST"
+        else
+          echo "✅ Image successfully built (not pushed)"
+        fi
+        
+        # Generate comprehensive job summary
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## 🐳 Docker Build Results
+        
+        ### 📋 Build Configuration
+        | Property | Value |
+        |----------|-------|
+        | Build Tool | \`$BUILD_TOOL\` |
+        | Java Version | \`$JAVA_VERSION\` |
+        | Spring Profiles | \`${{ inputs.spring-profiles }}\` |
+        | Working Directory | \`${{ inputs.working-directory }}\` |
+        
+        ### 🏷️ Image Details
+        | Property | Value |
+        |----------|-------|
+        | Image Name | \`$IMAGE_NAME\` |
+        | Platforms | \`$PLATFORMS\` |
+        | Push | \`$PUSH_ENABLED\` |
+        | Cache Hit | \`$CACHE_HIT\` |
+        
+        EOF
+        
+        # Add image details if pushed
+        if [[ "$PUSH_ENABLED" == "true" ]]; then
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+        ### 🚀 Registry Information
+        | Property | Value |
+        |----------|-------|
+        | Image ID | \`$IMAGE_ID\` |
+        | Digest | \`$IMAGE_DIGEST\` |
+        
+        EOF
+        fi
+        
+        # Add generated tags
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ### 🏷️ Generated Tags
+        \`\`\`
+        ${{ steps.meta.outputs.tags }}
+        \`\`\`
+        EOF
+
+branding:
+  icon: 'package'
+  color: 'blue' 

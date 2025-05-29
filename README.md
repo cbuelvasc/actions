@@ -9,6 +9,7 @@ A collection of reusable GitHub Actions designed to streamline CI/CD workflows f
 | [setup-java-maven-env](./setup-java-maven-env/) | Sets up Java 21 and Maven environment with caching | Maven | Environment setup for Maven projects |
 | [setup-java-gradle-env](./setup-java-gradle-env/) | Sets up Java 21 and Gradle environment with caching | Gradle | Environment setup for Gradle projects |
 | [spring-boot-test-suite](./spring-boot-test-suite/) | Comprehensive testing with coverage and reporting | Maven/Gradle | Complete testing pipeline |
+| [docker-build](./docker-build/) | Builds and optionally pushes Docker images | Maven/Gradle | Docker image creation and deployment |
 
 ## 📋 Quick Start
 
@@ -40,6 +41,19 @@ A collection of reusable GitHub Actions designed to streamline CI/CD workflows f
     build-tool: 'gradle'
     coverage-enabled: 'true'
     coverage-threshold: '80'
+```
+
+#### For Docker Build
+```yaml
+- name: Build Docker Image
+  uses: your-org/actions/docker-build@main
+  with:
+    build-tool: 'maven'
+    image-name: 'my-spring-app'
+    image-tag: 'latest'
+    push: 'true'
+    registry-username: ${{ secrets.DOCKER_USERNAME }}
+    registry-password: ${{ secrets.DOCKER_PASSWORD }}
 ```
 
 ## 💡 Common Workflow Examples
@@ -173,6 +187,65 @@ jobs:
       run: mvn clean compile
 ```
 
+### Example 5: Complete CI/CD Pipeline with Docker
+
+```yaml
+name: Complete CI/CD with Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Test the application
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Spring Boot Test Suite
+      uses: your-org/actions/spring-boot-test-suite@main
+      with:
+        build-tool: 'maven'
+        java-version: '21'
+        coverage-enabled: 'true'
+        coverage-threshold: '80'
+
+  # Build and push Docker image
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build and Push Docker Image
+      uses: your-org/actions/docker-build@main
+      with:
+        build-tool: 'maven'
+        image-name: ${{ env.IMAGE_NAME }}
+        image-tag: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
+        platforms: 'linux/amd64,linux/arm64'
+        push: 'true'
+        registry-url: ${{ env.REGISTRY }}
+        registry-username: ${{ github.actor }}
+        registry-password: ${{ secrets.GITHUB_TOKEN }}
+        build-args: |
+          BUILD_VERSION=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
 ## 🔧 Advanced Configuration
 
 ### Environment Variables
@@ -253,6 +326,7 @@ For detailed documentation on each action, including all inputs, outputs, and ad
 - [Setup Java Maven Environment](./setup-java-maven-env/README.md)
 - [Setup Java Gradle Environment](./setup-java-gradle-env/README.md)
 - [Spring Boot Test Suite](./spring-boot-test-suite/README.md)
+- [Docker Build](./docker-build/README.md)
 
 ## 🤝 Contributing
 
