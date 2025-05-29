@@ -390,11 +390,8 @@ runs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ steps.image-info.outputs.full-name }}
+        images: ${{ inputs.registry-url }}/${{ inputs.image-name }}
         tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=sha,prefix={{branch}}-
           type=raw,value=${{ inputs.image-tag }}
 
     # 11. Build and push Docker image
