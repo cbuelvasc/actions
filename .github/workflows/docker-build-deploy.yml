@@ -95,35 +95,33 @@ jobs:
       - name: Setup Java Maven Environment
         if: inputs.build-tool == 'maven'
         id: java-maven-setup
-        uses: ./setup-java-maven-env
+        uses: cbuelvasc/actions/setup-java-maven-env@master
         with:
           java-version: ${{ inputs.java-version }}
-          working-directory: ${{ inputs.working-directory }}
-          cache-enabled: ${{ inputs.cache-enabled }}
+          cache-strategy: ${{ inputs.cache-enabled && 'all' || 'none' }}
       
       - name: Setup Java Gradle Environment
         if: inputs.build-tool == 'gradle'
         id: java-gradle-setup
-        uses: ./setup-java-gradle-env
+        uses: cbuelvasc/actions/setup-java-gradle-env@master
         with:
           java-version: ${{ inputs.java-version }}
-          working-directory: ${{ inputs.working-directory }}
-          cache-enabled: ${{ inputs.cache-enabled }}
+          cache-strategy: ${{ inputs.cache-enabled && 'all' || 'none' }}
       
       - name: Build Docker Image
         id: docker-build
-        uses: ./docker-build
+        uses: cbuelvasc/actions/docker-build@master
         with:
           build-tool: ${{ inputs.build-tool }}
           working-directory: ${{ inputs.working-directory }}
           image-name: ${{ inputs.image-name }}
           image-tag: ${{ inputs.image-tag }}
-          dockerfile-path: ${{ inputs.dockerfile-path }}
+          dockerfile: ${{ inputs.dockerfile-path }}
           registry-url: ${{ inputs.registry-url }}
           push: ${{ inputs.push-enabled }}
           registry-username: ${{ secrets.registry-username }}
           registry-password: ${{ secrets.registry-password }}
-          cache-enabled: ${{ inputs.cache-enabled }}
+          cache-strategy: ${{ inputs.cache-enabled && 'all' || 'none' }}
       
       - name: Set Build Result
         id: build-result

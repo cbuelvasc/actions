@@ -118,7 +118,7 @@ on:
 jobs:
   build-test:
     name: 'Build and Test'
-    uses: ./.github/workflows/build-and-test.yml
+    uses: cbuelvasc/actions/.github/workflows/build-and-test.yml@master
     with:
       build-tool: ${{ inputs.build-tool }}
       java-version: ${{ inputs.java-version }}
@@ -133,7 +133,7 @@ jobs:
     name: 'Docker Build'
     if: inputs.docker-enabled == true
     needs: [build-test]
-    uses: ./.github/workflows/docker-build-deploy.yml
+    uses: cbuelvasc/actions/.github/workflows/docker-build-deploy.yml@master
     with:
       build-tool: ${{ inputs.build-tool }}
       java-version: ${{ inputs.java-version }}
