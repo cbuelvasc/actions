@@ -44,7 +44,7 @@ jobs:
       
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Create Maven Test Project
         id: maven-setup
@@ -228,7 +228,7 @@ jobs:
       
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
@@ -307,7 +307,7 @@ jobs:
       
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
@@ -371,7 +371,7 @@ jobs:
       
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
@@ -432,7 +432,7 @@ jobs:
       
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
@@ -501,7 +501,7 @@ jobs:
     
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
@@ -554,7 +554,7 @@ jobs:
     
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Test Projects
         uses: actions/download-artifact@v4
