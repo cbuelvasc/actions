@@ -199,7 +199,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Upload Changelog
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: changelog
           path: changelog.md

@@ -208,7 +208,7 @@ jobs:
           echo "✅ Gradle test project created"
 
       - name: Upload Test Projects
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-projects
           path: test-projects/
